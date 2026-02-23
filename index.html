@@ -524,6 +524,28 @@ html, body {
 #alerts-scroll::-webkit-scrollbar-track { background: var(--navy-dark); }
 #alerts-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 
+/* Alert cycle indicator dots */
+.alert-cycle-dots {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 10px;
+  flex-shrink: 0;
+}
+.cycle-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--border);
+  transition: background .3s;
+}
+.cycle-dot.active { background: var(--gold); }
+
+/* Wide tile for cycling mode */
+.alert-tile.wide {
+  width: 100%;
+  max-width: 600px;
+}
+
 .alert-tile {
   flex-shrink: 0;
   width: 280px;
@@ -617,7 +639,6 @@ html, body {
 }
 .ticker-scroll {
   display: flex;
-  animation: tickerMove 60s linear infinite;
   white-space: nowrap;
 }
 .ticker-scroll:hover { animation-play-state: paused; }
@@ -634,7 +655,7 @@ html, body {
 .ticker-item.advisory .ticker-dot { background:var(--advisory); }
 .ticker-item.statement .ticker-dot { background:var(--statement); }
 .ticker-item.special  .ticker-dot { background:var(--special); }
-@keyframes tickerMove { 0%{transform:translateX(0)} 100%{transform:translateX(-50%)} }
+/* tickerMove keyframe generated dynamically by JS */
 
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    CITY SEAL SVG
@@ -1148,8 +1169,32 @@ function renderObservation(p, station) {
   const tempF    = cToF(p.temperature?.value);
   const dewF     = cToF(p.dewpoint?.value);
   const feelsF   = cToF(p.heatIndex?.value || p.windChill?.value);
-  const windSpd  = windToMph(p.windSpeed?.value,  p.windSpeed?.unitCode);
-  const windGust = windToMph(p.windGust?.value,   p.windGust?.unitCode);
+  // Primary: use API structured fields
+  let windSpd  = windToMph(p.windSpeed?.value,  p.windSpeed?.unitCode);
+  let windGust = windToMph(p.windGust?.value,   p.windGust?.unitCode);
+
+  // Fallback: parse raw METAR string if gust is missing from API fields
+  // e.g. "29010G18KT" or "29010G18MPS"
+  const rawMetar = p.rawMessage || '';
+  if (rawMetar) {
+    const windMatch = rawMetar.match(/\b(\d{3}|VRB)(\d{2,3})(?:G(\d{2,3}))?(KT|MPS|KMH)\b/i);
+    if (windMatch) {
+      const rawSpd  = parseInt(windMatch[2]);
+      const rawGust = windMatch[3] ? parseInt(windMatch[3]) : null;
+      const unit    = windMatch[4].toUpperCase();
+      const toMph   = unit === 'KT'  ? 1.15078
+                    : unit === 'MPS' ? 2.23694
+                    : unit === 'KMH' ? 0.62137 : 1;
+      // Use METAR values if API structured fields seem wrong or missing
+      const metarSpd  = Math.round(rawSpd  * toMph);
+      const metarGust = rawGust ? Math.round(rawGust * toMph) : null;
+      // If API gust is null but METAR has one, use METAR
+      if (!windGust && metarGust) windGust = metarGust;
+      // If API speed differs by >5mph from METAR, prefer METAR (API unit confusion)
+      if (windSpd != null && Math.abs(windSpd - metarSpd) > 5) windSpd = metarSpd;
+      if (windSpd == null) windSpd = metarSpd;
+    }
+  }
   const windDir  = p.windDirection?.value;
   const pressInHg = paToInHg(p.altimeterSetting?.value || p.barometricPressure?.value);
   const visMi    = mToMi(p.visibility?.value);
@@ -1327,21 +1372,66 @@ function flashNewAlert(items) {
   setTimeout(() => hdr.style.borderBottomColor = 'var(--gold)', 2000);
 }
 
+let alertCycleTimer = null;
+let alertCycleIdx   = 0;
+
 function renderAlerts() {
   const scroll = document.getElementById('alerts-scroll');
   expireTimers.forEach(t => clearTimeout(t));
   expireTimers.clear();
+  if (alertCycleTimer) { clearInterval(alertCycleTimer); alertCycleTimer = null; }
 
   if (!allAlerts.length) {
     scroll.innerHTML = '<div class="no-alerts-tile">☀ No Active Alerts for Margate / FLZ072</div>';
     return;
   }
+
+  // ≤4 alerts: show all as tiles side by side
+  if (allAlerts.length <= 4) {
+    scroll.innerHTML = '';
+    allAlerts.forEach(a => {
+      const tile = buildTile(a);
+      scroll.appendChild(tile);
+      scheduleExpire(a, tile);
+    });
+    return;
+  }
+
+  // >4 alerts: auto-cycle through them with dot indicators
+  alertCycleIdx = 0;
+  renderCycledAlert(scroll);
+  alertCycleTimer = setInterval(() => {
+    alertCycleIdx = (alertCycleIdx + 1) % allAlerts.length;
+    renderCycledAlert(scroll);
+  }, 8000); // rotate every 8 seconds
+}
+
+function renderCycledAlert(scroll) {
+  const a = allAlerts[alertCycleIdx];
+  if (!a) return;
+
+  // Build tile
+  const tile = buildTile(a);
+  tile.classList.add('wide');
+  tile.style.animation = 'tileIn .4s ease-out';
+
+  // Build dot indicators
+  const dotsHTML = allAlerts.map((al, i) =>
+    `<div class="cycle-dot ${i === alertCycleIdx ? 'active' : ''}" title="${escHtml(al.event)}"></div>`
+  ).join('');
+
   scroll.innerHTML = '';
-  allAlerts.forEach(a => {
-    const tile = buildTile(a);
-    scroll.appendChild(tile);
-    scheduleExpire(a, tile);
-  });
+  scroll.appendChild(tile);
+
+  // Add cycle info
+  const info = document.createElement('div');
+  info.style.cssText = 'display:flex;flex-direction:column;justify-content:center;gap:6px;padding:0 8px;flex-shrink:0;';
+  info.innerHTML = `
+    <div style="font-family:'Oswald',sans-serif;font-size:10px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;">${alertCycleIdx+1} / ${allAlerts.length}</div>
+    <div class="alert-cycle-dots">${dotsHTML}</div>
+    <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--muted);">Auto-cycling 8s</div>
+  `;
+  scroll.appendChild(info);
 }
 
 function buildTile(a) {
@@ -1396,19 +1486,63 @@ function updateAlertPills() {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function renderTicker() {
   const ticker = document.getElementById('ticker');
-  if (!allAlerts.length) {
-    ticker.innerHTML = '<div class="ticker-item" style="color:var(--muted)">No active alerts for Margate / FLZ072 ☀</div>';
-    return;
-  }
-  const items = [...allAlerts, ...allAlerts];
-  ticker.innerHTML = items.map(a => `
+
+  // Build single set of items
+  const makeItems = (alerts) => alerts.map(a => `
     <div class="ticker-item ${a.sevClass}">
       <div class="ticker-dot"></div>
-      ${escHtml(a.event)}
-      ${a.expires ? ` · Exp ${a.expires.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:true})}` : ''}
+      ${escHtml(a.event)} &nbsp;·&nbsp;
+      ${escHtml((a.areas.split(';')[0]||'').trim())}
+      ${a.expires ? ` &nbsp;·&nbsp; Exp ${a.expires.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:true})}` : ''}
+      &nbsp;&nbsp;&nbsp;⬥&nbsp;&nbsp;&nbsp;
     </div>
   `).join('');
-  ticker.style.animationDuration = Math.max(20, allAlerts.length * 6) + 's';
+
+  if (!allAlerts.length) {
+    ticker.innerHTML = '<div class="ticker-item" style="color:var(--muted);padding:0 30px">No active alerts for Margate / FLZ072 &nbsp;☀&nbsp;&nbsp;&nbsp;⬥&nbsp;&nbsp;&nbsp;No active alerts for Margate / FLZ072 &nbsp;☀&nbsp;&nbsp;&nbsp;⬥&nbsp;&nbsp;&nbsp;</div>';
+    ticker.style.animation = 'none';
+    // Use a simple looping animation for no-alert state
+    startTickerAnim(ticker, 20);
+    return;
+  }
+
+  // Render single set first, measure width, then duplicate enough to fill
+  ticker.style.animation = 'none';
+  ticker.innerHTML = makeItems(allAlerts);
+
+  // After paint, measure and duplicate
+  requestAnimationFrame(() => {
+    const singleWidth = ticker.scrollWidth;
+    const containerWidth = ticker.parentElement.offsetWidth;
+    // Need enough copies to fill 2× container width for seamless loop
+    const copies = Math.max(2, Math.ceil((containerWidth * 2.5) / singleWidth));
+    let html = '';
+    for (let i = 0; i < copies; i++) html += makeItems(allAlerts);
+    ticker.innerHTML = html;
+
+    // Speed: ~80px/sec feels like broadcast TV crawl
+    const totalWidth = singleWidth * copies;
+    const halfWidth  = singleWidth * Math.floor(copies / 2);
+    const speed      = 80; // px per second
+    const duration   = (halfWidth / speed).toFixed(1);
+
+    // Inject a unique keyframe for this run
+    const styleId = 'tickerKF';
+    let styleEl = document.getElementById(styleId);
+    if (!styleEl) { styleEl = document.createElement('style'); styleEl.id = styleId; document.head.appendChild(styleEl); }
+    styleEl.textContent = `@keyframes tickerRun { 0%{transform:translateX(0)} 100%{transform:translateX(-${halfWidth}px)} }`;
+
+    ticker.style.animation = `tickerRun ${duration}s linear infinite`;
+  });
+}
+
+function startTickerAnim(ticker, seconds) {
+  const styleId = 'tickerKF';
+  let styleEl = document.getElementById(styleId);
+  if (!styleEl) { styleEl = document.createElement('style'); styleEl.id = styleId; document.head.appendChild(styleEl); }
+  const w = ticker.scrollWidth / 2;
+  styleEl.textContent = `@keyframes tickerRun { 0%{transform:translateX(0)} 100%{transform:translateX(-${w}px)} }`;
+  ticker.style.animation = `tickerRun ${seconds}s linear infinite`;
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
