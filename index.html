@@ -790,7 +790,7 @@ html, body {
       <!-- OBSERVATION PANEL -->
       <div class="panel" id="panel-obs">
         <div class="panel-header">
-          <span class="panel-title">📡 Latest Observation — KFXE</span>
+          <span class="panel-title" id="obsTitle">📡 Latest Observation — KFXE</span>
           <span class="panel-meta" id="obsMeta">Fort Lauderdale Executive Airport</span>
         </div>
         <div class="panel-body">
@@ -837,7 +837,15 @@ const MARGATE_LNG  = -80.2067;
 const NWS_ALERTS   = 'https://api.weather.gov/alerts/active?status=actual&zone=FLZ072';
 const NWS_FORECAST = 'https://api.weather.gov/gridpoints/MFL/110,37/forecast';
 // Margate FL gridpoint: MFL office, grid 110,37
-const NWS_OBS      = 'https://api.weather.gov/stations/KFXE/observations/latest';
+// Observation station fallback chain - tries each in order
+// Falls back if station hasn't reported in 75 minutes
+const OBS_STATIONS = [
+  { id: 'KFXE', name: 'Fort Lauderdale Executive' },
+  { id: 'KPMP', name: 'Pompano Beach Airpark' },
+  { id: 'KFLL', name: 'Fort Lauderdale-Hollywood Intl' },
+];
+let activeObsStation = OBS_STATIONS[0];
+let lastObsTime = null;
 const NWS_HEADERS  = { 'User-Agent':'MargateWxDash/1.0 (margatefl.com)', 'Accept':'application/geo+json' };
 
 const REFRESH_ALERTS   = 90_000;
@@ -879,18 +887,21 @@ function initMap() {
     attributionControl: true,
   });
 
-  // Base map: ESRI World Gray Canvas - shows land/water/borders cleanly
-  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
-    attribution: '© Esri © HERE © OpenStreetMap',
+  // Base map: OpenStreetMap standard (always works, shows roads/borders/water)
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap contributors',
+    subdomains: 'abc',
     maxZoom: 14,
+    zIndex: 1,
   }).addTo(map);
 
-  // Reference layer: adds state/county/city labels and borders on top
-  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}', {
-    attribution: '',
+  // Dark tint overlay to mute colors so radar pops
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png', {
+    attribution: '© CARTO',
+    subdomains: 'abcd',
     maxZoom: 14,
-    zIndex: 5,
-    opacity: 0.9,
+    zIndex: 3,
+    opacity: 0.65,
   }).addTo(map);
 
   // Margate marker
@@ -991,15 +1002,33 @@ function tempColor(tempF) {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 async function fetchForecast() {
   try {
-    const res  = await fetch(NWS_FORECAST, { headers: NWS_HEADERS });
+    // Step 1: get the correct gridpoint URL for Margate's exact lat/lon
+    // This avoids hardcoded grid coords that may be slightly off
+    let forecastUrl = NWS_FORECAST; // use cached gridpoint URL
+    if (!window._forecastUrl) {
+      const pointRes = await fetch(
+        `https://api.weather.gov/points/${MARGATE_LAT},${MARGATE_LNG}`,
+        { headers: NWS_HEADERS }
+      );
+      const pointData = await pointRes.json();
+      forecastUrl = pointData.properties.forecast;
+      window._forecastUrl = forecastUrl; // cache it
+    } else {
+      forecastUrl = window._forecastUrl;
+    }
+
+    // Step 2: fetch the actual forecast
+    const res  = await fetch(forecastUrl, { headers: NWS_HEADERS });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     const periods = (data.properties && data.properties.periods) || [];
+    if (!periods.length) throw new Error('No periods returned');
     renderForecast(periods);
     document.getElementById('fcMeta').textContent =
       'Updated ' + new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:true});
   } catch(e) {
     document.getElementById('forecast-grid').innerHTML =
-      '<div class="fc-loading">Forecast unavailable</div>';
+      '<div class="fc-loading">Forecast unavailable — ' + e.message + '</div>';
     console.error('Forecast error:', e);
   }
 }
@@ -1042,18 +1071,46 @@ function renderForecast(periods) {
 //  FETCH OBSERVATION
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 async function fetchObservation() {
-  try {
-    const res  = await fetch(NWS_OBS, { headers: NWS_HEADERS });
-    const data = await res.json();
-    renderObservation(data.properties);
-    document.getElementById('obsMeta').textContent =
-      'KFXE · Fort Lauderdale Executive · ' +
-      new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:true});
-  } catch(e) {
-    document.getElementById('obs-grid').innerHTML =
-      '<div class="fc-loading" style="grid-column:1/-1">Observation unavailable</div>';
-    console.error('Obs error:', e);
+  // Try each station in order; fall back if stale (>75 min) or unavailable
+  const STALE_MS = 75 * 60 * 1000;
+  for (let i = 0; i < OBS_STATIONS.length; i++) {
+    const station = OBS_STATIONS[i];
+    try {
+      const url = `https://api.weather.gov/stations/${station.id}/observations/latest`;
+      const res = await fetch(url, { headers: NWS_HEADERS });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const props = data.properties;
+
+      // Check if observation is stale (>75 min old)
+      const obsTime = props.timestamp ? new Date(props.timestamp) : null;
+      const ageMs = obsTime ? (Date.now() - obsTime) : Infinity;
+      if (ageMs > STALE_MS) {
+        console.warn(`${station.id} obs stale (${Math.round(ageMs/60000)} min) — trying next`);
+        continue;
+      }
+
+      // Good observation — render it
+      activeObsStation = station;
+      lastObsTime = obsTime;
+      renderObservation(props, station);
+      const ageMin = Math.round(ageMs / 60000);
+      const staleBadge = ageMin > 60
+        ? ` <span style="color:var(--watch);font-size:10px">(${ageMin}m old)</span>`
+        : '';
+      document.getElementById('obsMeta').textContent =
+        `${station.id} · ${station.name} · ` +
+        (obsTime ? obsTime.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:true}) : '--');
+      document.getElementById('obsTitle').innerHTML =
+        `📡 Latest Observation — ${station.id}${station.id !== 'KFXE' ? ' <span style="color:var(--gold-light);font-size:10px">(fallback)</span>' : ''}`;
+      return; // success — stop trying
+    } catch(e) {
+      console.warn(`${station.id} failed:`, e.message);
+    }
   }
+  // All stations failed
+  document.getElementById('obs-grid').innerHTML =
+    '<div class="fc-loading" style="grid-column:1/-1">All observation stations unavailable</div>';
 }
 
 function cToF(c) { return c == null ? null : Math.round(c * 9/5 + 32); }
@@ -1077,7 +1134,7 @@ function flightCategory(vis, ceil) {
   return 'VFR';
 }
 
-function renderObservation(p) {
+function renderObservation(p, station) {
   const tempF    = cToF(p.temperature?.value);
   const dewF     = cToF(p.dewpoint?.value);
   const feelsF   = cToF(p.heatIndex?.value || p.windChill?.value);
