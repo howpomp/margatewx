@@ -299,8 +299,9 @@ html, body {
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 #right-col {
   display: grid;
-  grid-template-rows: 42% 58%;
+  grid-template-rows: 40% 60%;
   border-right: none;
+  overflow: hidden;
 }
 
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -314,6 +315,7 @@ html, body {
   padding: 8px;
   height: 100%;
   overflow: hidden;
+  align-items: stretch;
 }
 
 .forecast-card {
@@ -797,13 +799,13 @@ html, body {
     <div id="right-col">
 
       <!-- FORECAST PANEL -->
-      <div class="panel" id="panel-forecast">
+      <div class="panel" id="panel-forecast" style="overflow:hidden;">
         <div class="panel-header">
           <span class="panel-title">☀ Zone Forecast — FLZ072</span>
           <span class="panel-meta" id="fcMeta">Loading...</span>
         </div>
-        <div class="panel-body">
-          <div id="forecast-grid">
+        <div class="panel-body" style="overflow:hidden;">
+          <div id="forecast-grid" style="height:100%;">
             <div class="fc-loading">Loading forecast...</div>
           </div>
         </div>
@@ -1089,6 +1091,35 @@ function renderForecast(periods) {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  FETCH OBSERVATION
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Fetch raw METAR text from aviationweather.gov — authoritative source for gusts
+async function fetchRawMetar(stationId) {
+  try {
+    const url = `https://aviationweather.gov/api/data/metar?ids=${stationId}&format=raw&hours=2`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const text = await res.text();
+    // Response is plain text, one METAR per line — take the first (most recent)
+    const lines = text.trim().split('\n').filter(l => l.trim().length > 0);
+    return lines[0] || null;
+  } catch(e) {
+    console.warn('METAR fetch failed for', stationId, e.message);
+    return null;
+  }
+}
+
+function parseMetarWind(metar) {
+  if (!metar) return { spd: null, gust: null, dir: null };
+  // Match wind group: 29010G18KT or VRB05KT or 00000KT
+  const m = metar.match(/\b(\d{3}|VRB)(\d{2,3})(?:G(\d{2,3}))?(KT|MPS|KMH)\b/i);
+  if (!m) return { spd: null, gust: null, dir: null };
+  const unit = m[4].toUpperCase();
+  const toMph = unit === 'KT' ? 1.15078 : unit === 'MPS' ? 2.23694 : 0.62137;
+  const dir  = m[1] === 'VRB' ? null : parseInt(m[1]);
+  const spd  = Math.round(parseInt(m[2]) * toMph);
+  const gust = m[3] ? Math.round(parseInt(m[3]) * toMph) : null;
+  return { spd, gust, dir };
+}
+
 async function fetchObservation() {
   // Try each station in order; fall back if stale (>75 min) or unavailable
   const STALE_MS = 75 * 60 * 1000;
@@ -1109,25 +1140,24 @@ async function fetchObservation() {
         continue;
       }
 
+      // Fetch raw METAR in parallel for accurate wind/gust data
+      const rawMetar = await fetchRawMetar(station.id);
+      const metarWind = parseMetarWind(rawMetar);
+
       // Good observation — render it
       activeObsStation = station;
       lastObsTime = obsTime;
-      renderObservation(props, station);
-      const ageMin = Math.round(ageMs / 60000);
-      const staleBadge = ageMin > 60
-        ? ` <span style="color:var(--watch);font-size:10px">(${ageMin}m old)</span>`
-        : '';
+      renderObservation(props, station, metarWind);
       document.getElementById('obsMeta').textContent =
         `${station.id} · ${station.name} · ` +
         (obsTime ? obsTime.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:true}) : '--');
       document.getElementById('obsTitle').innerHTML =
         `📡 Latest Observation — ${station.id}${station.id !== 'KFXE' ? ' <span style="color:var(--gold-light);font-size:10px">(fallback)</span>' : ''}`;
-      return; // success — stop trying
+      return;
     } catch(e) {
       console.warn(`${station.id} failed:`, e.message);
     }
   }
-  // All stations failed
   document.getElementById('obs-grid').innerHTML =
     '<div class="fc-loading" style="grid-column:1/-1">All observation stations unavailable</div>';
 }
@@ -1165,37 +1195,23 @@ function flightCategory(vis, ceil) {
   return 'VFR';
 }
 
-function renderObservation(p, station) {
+function renderObservation(p, station, metarWind) {
   const tempF    = cToF(p.temperature?.value);
   const dewF     = cToF(p.dewpoint?.value);
   const feelsF   = cToF(p.heatIndex?.value || p.windChill?.value);
-  // Primary: use API structured fields
-  let windSpd  = windToMph(p.windSpeed?.value,  p.windSpeed?.unitCode);
-  let windGust = windToMph(p.windGust?.value,   p.windGust?.unitCode);
-
-  // Fallback: parse raw METAR string if gust is missing from API fields
-  // e.g. "29010G18KT" or "29010G18MPS"
-  const rawMetar = p.rawMessage || '';
-  if (rawMetar) {
-    const windMatch = rawMetar.match(/\b(\d{3}|VRB)(\d{2,3})(?:G(\d{2,3}))?(KT|MPS|KMH)\b/i);
-    if (windMatch) {
-      const rawSpd  = parseInt(windMatch[2]);
-      const rawGust = windMatch[3] ? parseInt(windMatch[3]) : null;
-      const unit    = windMatch[4].toUpperCase();
-      const toMph   = unit === 'KT'  ? 1.15078
-                    : unit === 'MPS' ? 2.23694
-                    : unit === 'KMH' ? 0.62137 : 1;
-      // Use METAR values if API structured fields seem wrong or missing
-      const metarSpd  = Math.round(rawSpd  * toMph);
-      const metarGust = rawGust ? Math.round(rawGust * toMph) : null;
-      // If API gust is null but METAR has one, use METAR
-      if (!windGust && metarGust) windGust = metarGust;
-      // If API speed differs by >5mph from METAR, prefer METAR (API unit confusion)
-      if (windSpd != null && Math.abs(windSpd - metarSpd) > 5) windSpd = metarSpd;
-      if (windSpd == null) windSpd = metarSpd;
-    }
+  // METAR is authoritative for wind — use it as primary source if available
+  // API structured fields used only as fallback
+  let windSpd, windGust;
+  if (metarWind && metarWind.spd != null) {
+    windSpd  = metarWind.spd;
+    windGust = metarWind.gust;  // null if no G group in METAR = truly no gusts
+  } else {
+    // Fallback to NWS API fields (may have unit confusion)
+    windSpd  = windToMph(p.windSpeed?.value,  p.windSpeed?.unitCode);
+    windGust = windToMph(p.windGust?.value,   p.windGust?.unitCode);
   }
-  const windDir  = p.windDirection?.value;
+  // Use METAR wind direction if available (more reliable than API)
+  const windDir = (metarWind?.dir != null) ? metarWind.dir : p.windDirection?.value;
   const pressInHg = paToInHg(p.altimeterSetting?.value || p.barometricPressure?.value);
   const visMi    = mToMi(p.visibility?.value);
   const humid    = p.relativeHumidity?.value ? Math.round(p.relativeHumidity.value) : null;
