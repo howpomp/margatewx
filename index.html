@@ -1090,18 +1090,14 @@ function renderForecast(periods) {
 async function fetchRawMetar(stationId) {
   try {
     const url = `https://aviationweather.gov/api/data/metar?ids=${stationId}&format=raw&hours=2`;
-    // 4-second timeout — if CORS blocks or server is slow, never hold up the page
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 4000);
-    const res = await fetch(url, { signal: controller.signal });
-    clearTimeout(timer);
+    const res = await fetch(url);
     if (!res.ok) return null;
     const text = await res.text();
+    // Response is plain text, one METAR per line — take the first (most recent)
     const lines = text.trim().split('\n').filter(l => l.trim().length > 0);
     return lines[0] || null;
   } catch(e) {
-    // AbortError = timeout, TypeError = CORS block — both are silent fallbacks
-    console.warn('METAR fetch failed for', stationId, '—', e.message);
+    console.warn('METAR fetch failed for', stationId, e.message);
     return null;
   }
 }
@@ -1116,48 +1112,6 @@ function parseMetarWind(metar) {
   const spd   = Math.round(parseInt(m[2]) * toMph);
   const gust  = m[3] ? Math.round(parseInt(m[3]) * toMph) : null;
   return { spd, gust, dir };
-}
-
-function parseMetarTempDew(metar) {
-  // Parses METAR temp/dew group: e.g. 13/M04  or  22/18  or  M02/M05
-  // Returns { tempC, dewC } or nulls if not found
-  if (!metar) return { tempC: null, dewC: null };
-  const m = metar.match(/\b(M?\d{2})\/(M?\d{2})\b/);
-  if (!m) return { tempC: null, dewC: null };
-  const parseVal = s => s.startsWith('M') ? -parseInt(s.slice(1)) : parseInt(s);
-  return {
-    tempC: parseVal(m[1]),
-    dewC:  parseVal(m[2]),
-  };
-}
-
-function calcRelativeHumidity(tempC, dewC) {
-  // Magnus formula approximation
-  if (tempC == null || dewC == null) return null;
-  const rh = 100 * Math.exp((17.625 * dewC) / (243.04 + dewC)) /
-                   Math.exp((17.625 * tempC) / (243.04 + tempC));
-  return Math.round(Math.min(100, Math.max(0, rh)));
-}
-
-function calcFeelsLike(tempF, dewF, windMph) {
-  // Heat index if hot, wind chill if cold, otherwise just temp
-  if (tempF == null) return null;
-  if (tempF >= 80 && dewF != null) {
-    // Rothfusz heat index
-    const T = tempF, R = calcRelativeHumidity(
-      (tempF - 32) * 5/9, dewF != null ? (dewF - 32) * 5/9 : null
-    ) ?? 50;
-    const hi = -42.379 + 2.04901523*T + 10.14333127*R - 0.22475541*T*R
-               - 0.00683783*T*T - 0.05481717*R*R + 0.00122874*T*T*R
-               + 0.00085282*T*R*R - 0.00000199*T*T*R*R;
-    return Math.round(hi);
-  }
-  if (tempF <= 50 && windMph != null && windMph >= 3) {
-    // NWS wind chill formula
-    const wc = 35.74 + 0.6215*tempF - 35.75*Math.pow(windMph,0.16) + 0.4275*tempF*Math.pow(windMph,0.16);
-    return Math.round(wc);
-  }
-  return null;
 }
 
 function decodeMetarRemarks(metar) {
@@ -1236,23 +1190,19 @@ async function fetchObservation() {
         continue;
       }
 
-      // Render immediately with NWS API data so page is never blocked
+      // Fetch raw METAR in parallel for accurate wind/gust data
+      const rawMetar = await fetchRawMetar(station.id);
+      const metarWind = parseMetarWind(rawMetar);
+
+      // Good observation — render it
       activeObsStation = station;
       lastObsTime = obsTime;
-      renderObservation(props, station, null, null);
+      renderObservation(props, station, metarWind, rawMetar);
       document.getElementById('obsMeta').textContent =
         `${station.id} · ${station.name} · ` +
         (obsTime ? obsTime.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:true}) : '--');
       document.getElementById('obsTitle').innerHTML =
         `📡 Latest Observation — ${station.id}${station.id !== 'KFXE' ? ' <span style="color:var(--gold-light);font-size:10px">(fallback)</span>' : ''}`;
-
-      // Then fetch raw METAR in background — update display if it arrives within 4s
-      fetchRawMetar(station.id).then(rawMetar => {
-        if (!rawMetar) return; // CORS blocked or timed out — NWS data stands
-        const metarWind = parseMetarWind(rawMetar);
-        renderObservation(props, station, metarWind, rawMetar);
-        console.log('METAR update applied:', rawMetar);
-      });
       return;
     } catch(e) {
       console.warn(`${station.id} failed:`, e.message);
@@ -1297,21 +1247,9 @@ function flightCategory(vis, ceil) {
 }
 
 function renderObservation(p, station, metarWind, rawMetar) {
-  // Parse temp/dew from raw METAR first (most reliable when API returns null)
-  const metarTD = parseMetarTempDew(rawMetar);
-
-  // Temp: use METAR if API is null
-  const tempC = p.temperature?.value ?? metarTD.tempC;
-  const tempF = cToF(tempC);
-
-  // Dew: use METAR if API is null
-  const dewC  = p.dewpoint?.value ?? metarTD.dewC;
-  const dewF  = cToF(dewC);
-
-  // Humidity: use API if available, else calculate from temp+dew
-  const humid = p.relativeHumidity?.value
-    ? Math.round(p.relativeHumidity.value)
-    : calcRelativeHumidity(tempC, dewC);
+  const tempF    = cToF(p.temperature?.value);
+  const dewF     = cToF(p.dewpoint?.value);
+  const feelsF   = cToF(p.heatIndex?.value || p.windChill?.value);
   // METAR is authoritative for wind — use it as primary source if available
   // API structured fields used only as fallback
   let windSpd, windGust;
@@ -1327,7 +1265,7 @@ function renderObservation(p, station, metarWind, rawMetar) {
   const windDir = (metarWind?.dir != null) ? metarWind.dir : p.windDirection?.value;
   const pressInHg = paToInHg(p.altimeterSetting?.value || p.barometricPressure?.value);
   const visMi    = mToMi(p.visibility?.value);
-  // humid already computed above from METAR or API
+  const humid    = p.relativeHumidity?.value ? Math.round(p.relativeHumidity.value) : null;
   const sky      = p.textDescription || 'Unknown';
   // Ceiling from cloud layers
   const ceilLayer = (p.cloudLayers||[]).find(l => ['BKN','OVC'].includes(l.amount));
@@ -1337,11 +1275,6 @@ function renderObservation(p, station, metarWind, rawMetar) {
   const tColor   = tempF != null ? tempColor(tempF) : '#fff';
   // Use resolved windDir (METAR preferred) for cardinal display
   const windDirCardinal = windDir != null ? degToCardinal(windDir) : '';
-
-  // Calculate feels-like now that we have temp, dew, and wind
-  const feelsF = p.heatIndex?.value != null ? cToF(p.heatIndex.value)
-               : p.windChill?.value  != null ? cToF(p.windChill.value)
-               : calcFeelsLike(tempF, dewF, windSpd);
 
   // Build decoded remarks block
   const decodedRmks = decodeMetarRemarks(rawMetar);
