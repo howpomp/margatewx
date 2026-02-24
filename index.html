@@ -1,1 +1,1675 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>City of Margate — Weather Operations Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Source+Sans+3:wght@300;400;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   MARGATE BRAND VARIABLES
+   Primary navy:  #003087
+   Gold accent:   #C8973A
+   Light gold:    #E8B84B
+   Sky blue:      #0066CC
+   Dark bg:       #001A4D
+   Panel bg:      #002060
+   Border:        #0A3A7A
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+:root {
+  --navy:       #003087;
+  --navy-dark:  #001A4D;
+  --navy-mid:   #002060;
+  --navy-light: #0A3A7A;
+  --sky:        #0066CC;
+  --gold:       #C8973A;
+  --gold-light: #E8B84B;
+  --gold-pale:  #F5D98A;
+  --white:      #FFFFFF;
+  --off-white:  #E8EEF8;
+  --muted:      #7A9AC0;
+  --border:     #0A3A7A;
+  --panel:      rgba(0,32,96,0.85);
+
+  --warning:    #E01010;
+  --warning-bg: rgba(224,16,16,0.15);
+  --watch:      #D4A017;
+  --watch-bg:   rgba(212,160,23,0.15);
+  --advisory:   #2288DD;
+  --advisory-bg:rgba(34,136,221,0.15);
+  --statement:  #22AA55;
+  --statement-bg:rgba(34,170,85,0.12);
+  --special:    #FF7A00;
+  --special-bg: rgba(255,122,0,0.12);
+}
+
+* { margin:0; padding:0; box-sizing:border-box; }
+
+html, body {
+  width:100%; height:100%;
+  background: var(--navy-dark);
+  color: var(--off-white);
+  font-family: 'Source Sans 3', sans-serif;
+  overflow: hidden;
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   HEADER
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+#header {
+  height: 56px;
+  background: linear-gradient(135deg, #001A4D 0%, #003087 50%, #002060 100%);
+  border-bottom: 3px solid var(--gold);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  position: relative;
+  flex-shrink: 0;
+  box-shadow: 0 2px 20px rgba(0,0,0,0.5);
+}
+
+/* City Seal SVG */
+.city-seal {
+  width: 42px;
+  height: 42px;
+  flex-shrink: 0;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.city-name-block { line-height: 1; }
+.city-name-block .city-label {
+  font-family: 'Oswald', sans-serif;
+  font-size: 10px; font-weight: 400;
+  letter-spacing: 4px; text-transform: uppercase;
+  color: var(--gold-light); opacity: .8;
+}
+.city-name-block .city-name {
+  font-family: 'Oswald', sans-serif;
+  font-size: 22px; font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  color: var(--white);
+  line-height: 1;
+}
+.city-name-block .city-sub {
+  font-family: 'Oswald', sans-serif;
+  font-size: 11px; font-weight: 400;
+  letter-spacing: 3px; text-transform: uppercase;
+  color: var(--gold);
+}
+
+.header-center {
+  position: absolute;
+  left: 50%; transform: translateX(-50%);
+  text-align: center;
+}
+.header-center .dash-title {
+  font-family: 'Oswald', sans-serif;
+  font-size: 14px; font-weight: 600;
+  letter-spacing: 4px; text-transform: uppercase;
+  color: var(--gold-light);
+}
+.header-center .zone-tag {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 11px; color: var(--muted);
+  letter-spacing: 1px;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.clock-block { text-align: right; }
+.clock-time {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 22px; color: var(--white); letter-spacing: 2px;
+}
+.clock-date {
+  font-family: 'Oswald', sans-serif;
+  font-size: 11px; font-weight: 400;
+  letter-spacing: 2px; text-transform: uppercase;
+  color: var(--muted);
+}
+
+.status-pip {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: #33DD66;
+  box-shadow: 0 0 8px #33DD66;
+  animation: pipPulse 2.5s infinite;
+}
+.status-pip.loading { background: var(--gold); box-shadow: 0 0 8px var(--gold); animation: pipPulse .8s infinite; }
+.status-pip.error   { background: var(--warning); box-shadow: 0 0 8px var(--warning); animation: none; }
+@keyframes pipPulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   MAIN GRID LAYOUT
+   Top row: Radar (60%) | Right col (40%)
+     Right col: Forecast (top) | Obs (bottom)
+   Bottom row: Alerts table (100%)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+#dashboard {
+  display: grid;
+  grid-template-rows: 1fr auto;
+  height: calc(100vh - 56px);
+  gap: 0;
+}
+
+#top-row {
+  display: grid;
+  grid-template-columns: 58% 42%;
+  gap: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   PANEL SHARED STYLES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+.panel {
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+}
+
+.panel-header {
+  background: linear-gradient(90deg, var(--navy-dark), var(--navy-mid));
+  border-bottom: 2px solid var(--gold);
+  padding: 5px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+.panel-title {
+  font-family: 'Oswald', sans-serif;
+  font-size: 12px; font-weight: 600;
+  letter-spacing: 3px; text-transform: uppercase;
+  color: var(--gold-light);
+}
+.panel-meta {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 10px; color: var(--muted);
+}
+
+.panel-body {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   RADAR PANEL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+#panel-radar { border-left: none; }
+
+#radarMap {
+  width: 100%;
+  height: 100%;
+  background: #020810;
+}
+
+/* Leaflet overrides */
+.leaflet-container { background: #020810 !important; }
+.leaflet-control-zoom a {
+  background: var(--navy-mid) !important;
+  color: var(--gold) !important;
+  border-color: var(--border) !important;
+}
+.leaflet-control-attribution {
+  background: rgba(0,20,50,0.7) !important;
+  color: var(--muted) !important;
+  font-size: 9px !important;
+}
+
+.radar-timestamp {
+  position: absolute;
+  bottom: 8px; left: 8px;
+  background: rgba(0,20,60,0.85);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  padding: 3px 8px;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 11px; color: var(--gold-light);
+  z-index: 1000;
+  pointer-events: none;
+}
+
+.radar-legend {
+  position: absolute;
+  top: 8px; right: 8px;
+  background: rgba(0,20,60,0.85);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  padding: 6px 8px;
+  z-index: 1000;
+  pointer-events: none;
+}
+.radar-legend-title {
+  font-family: 'Oswald', sans-serif;
+  font-size: 9px; letter-spacing: 2px;
+  text-transform: uppercase; color: var(--muted);
+  margin-bottom: 4px;
+}
+.radar-legend-bar {
+  display: flex;
+  height: 8px;
+  width: 120px;
+  border-radius: 1px;
+  overflow: hidden;
+}
+.radar-legend-bar div { flex: 1; }
+.radar-legend-labels {
+  display: flex;
+  justify-content: space-between;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 8px; color: var(--muted);
+  margin-top: 2px;
+}
+
+/* Margate location marker */
+.margate-marker {
+  background: none; border: none;
+}
+.margate-dot {
+  width: 12px; height: 12px;
+  background: var(--gold);
+  border: 2px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 0 8px var(--gold), 0 0 16px rgba(200,151,58,0.4);
+  animation: margatePulse 2s infinite;
+}
+@keyframes margatePulse {
+  0%,100% { box-shadow: 0 0 6px var(--gold), 0 0 12px rgba(200,151,58,0.4); }
+  50%      { box-shadow: 0 0 14px var(--gold), 0 0 28px rgba(200,151,58,0.6); }
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   RIGHT COLUMN
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+#right-col {
+  display: grid;
+  grid-template-rows: 40% 60%;
+  border-right: none;
+  overflow: hidden;
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   FORECAST PANEL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+#forecast-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: 1fr;
+  gap: 6px;
+  padding: 8px;
+  height: 100%;
+  overflow: hidden;
+  align-items: stretch;
+}
+
+.forecast-card {
+  background: rgba(0,20,60,0.6);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 8px 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  position: relative;
+  overflow: hidden;
+}
+.forecast-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+}
+.forecast-card.day::before   { background: var(--gold); }
+.forecast-card.night::before { background: var(--sky); }
+
+.fc-period {
+  font-family: 'Oswald', sans-serif;
+  font-size: 11px; font-weight: 600;
+  letter-spacing: 2px; text-transform: uppercase;
+  color: var(--gold-light);
+  text-align: center;
+}
+.fc-icon { font-size: 28px; line-height: 1; }
+.fc-temp {
+  font-family: 'Oswald', sans-serif;
+  font-size: 26px; font-weight: 700;
+  color: var(--white); line-height: 1;
+}
+.fc-temp span {
+  font-size: 14px; color: var(--muted); font-weight: 400;
+}
+.fc-short {
+  font-family: 'Source Sans 3', sans-serif;
+  font-size: 11px; font-weight: 600;
+  color: var(--off-white);
+  text-align: center; line-height: 1.2;
+}
+.fc-wind {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 10px; color: var(--muted);
+  text-align: center;
+}
+.fc-precip {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 10px; color: var(--sky);
+}
+.fc-loading {
+  grid-column: 1/-1;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--muted);
+  font-family: 'Oswald', sans-serif;
+  font-size: 13px; letter-spacing: 2px; text-transform: uppercase;
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   OBSERVATION PANEL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+#obs-grid {
+  padding: 8px 10px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: auto 1fr auto;
+  gap: 6px;
+  height: 100%;
+  overflow: hidden;
+}
+
+.obs-hero {
+  grid-column: 1/-1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(0,20,60,0.5);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--gold);
+  border-radius: 3px;
+  padding: 6px 10px;
+}
+.obs-hero-icon { font-size: 32px; line-height: 1; }
+.obs-hero-temp {
+  font-family: 'Oswald', sans-serif;
+  font-size: 38px; font-weight: 700;
+  color: var(--white); line-height: 1;
+}
+.obs-hero-temp span { font-size: 18px; color: var(--muted); font-weight: 400; }
+.obs-hero-desc {
+  flex: 1;
+}
+.obs-hero-sky {
+  font-family: 'Oswald', sans-serif;
+  font-size: 14px; font-weight: 600;
+  color: var(--off-white); text-transform: uppercase; letter-spacing: 1px;
+}
+.obs-hero-feel {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 11px; color: var(--muted);
+}
+.obs-flight {
+  font-family: 'Oswald', sans-serif;
+  font-size: 12px; font-weight: 700;
+  letter-spacing: 2px; padding: 2px 8px;
+  border-radius: 2px; text-transform: uppercase;
+}
+.obs-flight.VFR  { background: rgba(34,170,85,0.25); color: #44DD88; border: 1px solid #44DD88; }
+.obs-flight.MVFR { background: rgba(34,136,221,0.25); color: #66AAFF; border: 1px solid #66AAFF; }
+.obs-flight.IFR  { background: rgba(224,16,16,0.25);  color: #FF6666; border: 1px solid #FF6666; }
+.obs-flight.LIFR { background: rgba(160,0,160,0.25);  color: #EE88FF; border: 1px solid #EE88FF; }
+
+.obs-stat {
+  background: rgba(0,20,60,0.5);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.obs-stat-label {
+  font-family: 'Oswald', sans-serif;
+  font-size: 11px; font-weight: 700;
+  letter-spacing: 2px; text-transform: uppercase;
+  color: var(--muted); margin-bottom: 3px;
+}
+.obs-stat-value {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 22px; color: var(--white); line-height: 1.1;
+}
+.obs-stat-sub {
+  font-family: 'Oswald', sans-serif;
+  font-size: 13px; color: var(--off-white); font-weight: 500;
+}
+.obs-stat-gust {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 16px; color: var(--gold-light);
+}
+
+/* METAR remarks panel */
+.obs-remarks {
+  grid-column: 1 / -1;
+  background: rgba(0,20,60,0.5);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--muted);
+  border-radius: 3px;
+  padding: 6px 10px;
+  overflow: hidden;
+}
+.obs-remarks-title {
+  font-family: 'Oswald', sans-serif;
+  font-size: 10px; font-weight: 700;
+  letter-spacing: 2px; text-transform: uppercase;
+  color: var(--muted); margin-bottom: 4px;
+}
+.obs-remarks-items {
+  display: flex; flex-wrap: wrap; gap: 4px 16px;
+}
+.obs-rmk-item {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 11px; color: var(--off-white);
+  display: flex; gap: 4px; align-items: baseline;
+}
+.obs-rmk-label {
+  color: var(--muted); font-size: 10px;
+  white-space: nowrap;
+}
+.obs-rmk-raw {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 10px; color: var(--muted);
+  margin-top: 3px; word-break: break-all;
+}
+
+/* Wind direction arrow */
+.wind-arrow {
+  display: inline-block;
+  font-size: 14px;
+  transition: transform .5s;
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   ALERTS TABLE (BOTTOM)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+#bottom-row {
+  border-top: 2px solid var(--gold);
+  flex-shrink: 0;
+  max-height: 220px;
+  min-height: 100px;
+  display: flex;
+  flex-direction: column;
+  background: var(--navy-dark);
+}
+
+#alerts-panel-header {
+  background: linear-gradient(90deg, var(--navy-dark), var(--navy-mid));
+  border-bottom: 1px solid var(--border);
+  padding: 4px 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+.alerts-title {
+  font-family: 'Oswald', sans-serif;
+  font-size: 12px; font-weight: 600;
+  letter-spacing: 3px; text-transform: uppercase;
+  color: var(--gold-light);
+}
+.alert-pill {
+  font-family: 'Oswald', sans-serif;
+  font-size: 10px; font-weight: 600;
+  letter-spacing: 1px; text-transform: uppercase;
+  padding: 1px 8px; border-radius: 10px;
+}
+.pill-warning  { background: var(--warning-bg); color: var(--warning); border: 1px solid var(--warning); }
+.pill-watch    { background: var(--watch-bg);   color: var(--watch);   border: 1px solid var(--watch); }
+.pill-advisory { background: var(--advisory-bg);color: var(--advisory);border: 1px solid var(--advisory); }
+.pill-statement{ background:var(--statement-bg);color:var(--statement);border:1px solid var(--statement); }
+.pill-special  { background: var(--special-bg); color: var(--special); border: 1px solid var(--special); }
+
+#alerts-panel-header .spacer { flex: 1; }
+#alerts-panel-header .meta {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 10px; color: var(--muted);
+}
+
+#alerts-scroll {
+  flex: 1;
+  overflow-x: auto;
+  overflow-y: hidden;
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  padding: 6px 10px;
+}
+#alerts-scroll::-webkit-scrollbar { height: 4px; }
+#alerts-scroll::-webkit-scrollbar-track { background: var(--navy-dark); }
+#alerts-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+/* Alert cycle indicator dots */
+.alert-cycle-dots {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 10px;
+  flex-shrink: 0;
+}
+.cycle-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--border);
+  transition: background .3s;
+}
+.cycle-dot.active { background: var(--gold); }
+
+/* Wide tile for cycling mode */
+.alert-tile.wide {
+  width: 100%;
+  max-width: 600px;
+}
+
+.alert-tile {
+  flex-shrink: 0;
+  width: 280px;
+  border-radius: 3px;
+  border-left: 4px solid;
+  padding: 7px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  animation: tileIn .3s ease-out;
+  position: relative;
+  overflow: hidden;
+}
+@keyframes tileIn {
+  from { opacity:0; transform:translateY(8px); }
+  to   { opacity:1; transform:translateY(0); }
+}
+.alert-tile.expiring { animation: tileOut .8s ease-in forwards; }
+@keyframes tileOut { to { opacity:0; width:0; padding:0; margin:0; } }
+
+.alert-tile.warning  { border-color:var(--warning);   background:var(--warning-bg); }
+.alert-tile.watch    { border-color:var(--watch);     background:var(--watch-bg); }
+.alert-tile.advisory { border-color:var(--advisory);  background:var(--advisory-bg); }
+.alert-tile.statement{ border-color:var(--statement); background:var(--statement-bg); }
+.alert-tile.special  { border-color:var(--special);   background:var(--special-bg); }
+
+.tile-event {
+  font-family: 'Oswald', sans-serif;
+  font-size: 13px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .5px;
+  color: var(--white); line-height: 1.1;
+}
+.alert-tile.warning .tile-event { color: #FF8888; }
+.alert-tile.watch   .tile-event { color: var(--gold-light); }
+
+.tile-issued {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 9px; color: var(--muted);
+}
+.tile-area {
+  font-family: 'Source Sans 3', sans-serif;
+  font-size: 10px; color: var(--off-white);
+  opacity: .8;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.tile-expires {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 9px;
+}
+.tile-bar {
+  height: 2px; border-radius: 1px;
+  background: rgba(255,255,255,0.1);
+  margin-top: 2px; overflow: hidden;
+}
+.tile-bar-fill { height: 100%; border-radius: 1px; transition: width 60s linear; }
+.alert-tile.warning  .tile-bar-fill { background: var(--warning); }
+.alert-tile.watch    .tile-bar-fill { background: var(--watch); }
+.alert-tile.advisory .tile-bar-fill { background: var(--advisory); }
+.alert-tile.statement .tile-bar-fill { background: var(--statement); }
+.alert-tile.special  .tile-bar-fill { background: var(--special); }
+
+.no-alerts-tile {
+  display: flex; align-items: center; gap: 10px;
+  color: var(--muted);
+  font-family: 'Oswald', sans-serif;
+  font-size: 13px; letter-spacing: 2px; text-transform: uppercase;
+  padding: 0 12px;
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   TICKER
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+#ticker-bar {
+  height: 28px;
+  background: var(--navy-mid);
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.ticker-label {
+  background: var(--gold);
+  color: var(--navy-dark);
+  font-family: 'Oswald', sans-serif;
+  font-size: 11px; font-weight: 700;
+  letter-spacing: 2px; text-transform: uppercase;
+  padding: 0 12px; height: 100%;
+  display: flex; align-items: center;
+  flex-shrink: 0; white-space: nowrap;
+}
+.ticker-scroll {
+  display: flex;
+  white-space: nowrap;
+}
+.ticker-scroll:hover { animation-play-state: paused; }
+.ticker-item {
+  font-family: 'Oswald', sans-serif;
+  font-size: 12px; font-weight: 500;
+  letter-spacing: .5px; text-transform: uppercase;
+  padding: 0 40px 0 0;
+  display: flex; align-items: center; gap: 6px;
+}
+.ticker-dot { width:5px; height:5px; border-radius:50%; flex-shrink:0; }
+.ticker-item.warning  .ticker-dot { background:var(--warning); }
+.ticker-item.watch    .ticker-dot { background:var(--watch); }
+.ticker-item.advisory .ticker-dot { background:var(--advisory); }
+.ticker-item.statement .ticker-dot { background:var(--statement); }
+.ticker-item.special  .ticker-dot { background:var(--special); }
+/* tickerMove keyframe generated dynamically by JS */
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   CITY SEAL SVG
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+/* Rendered inline below */
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   MOBILE RESPONSIVE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+@media (max-width: 768px) {
+  html, body { overflow: auto; }
+  #dashboard { grid-template-rows: auto auto auto; height: auto; }
+  #top-row   { grid-template-columns: 1fr; grid-template-rows: 280px auto auto; }
+  #right-col { grid-template-rows: auto auto; }
+  #panel-radar { height: 280px; }
+  #bottom-row { max-height: none; }
+  #alerts-scroll { flex-wrap: wrap; overflow-y: auto; height: auto; max-height: 300px; }
+  .alert-tile { width: calc(50% - 6px); }
+  #forecast-grid { grid-template-columns: repeat(3,1fr); }
+  .header-center { display: none; }
+  .city-name-block .city-name { font-size: 16px; }
+  #ticker-bar { display: none; }
+}
+@media (max-width: 480px) {
+  .alert-tile { width: 100%; }
+  #forecast-grid { grid-template-columns: 1fr 1fr; }
+  #obs-grid { grid-template-columns: 1fr; }
+  .obs-hero { flex-wrap: wrap; }
+}
+</style>
+
+<!-- Leaflet CSS -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+</head>
+<body>
+
+<!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     HEADER
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+<div id="header">
+  <div class="header-left">
+    <div class="city-name-block">
+      <div class="city-label">City of</div>
+      <div class="city-name">Margate</div>
+      <div class="city-sub">Broward County, Florida</div>
+    </div>
+  </div>
+
+  <div class="header-center">
+    <div class="dash-title">Weather Operations Dashboard</div>
+    <div class="zone-tag">NWS Zone FLZ072 · MFL Office · KFXE Obs</div>
+  </div>
+
+  <div class="header-right">
+    <div id="statusPip" class="status-pip loading"></div>
+    <div class="clock-block">
+      <div id="clock" class="clock-time">--:--:--</div>
+      <div id="clockDate" class="clock-date">Loading...</div>
+    </div>
+  </div>
+</div>
+
+<!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     DASHBOARD GRID
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+<div id="dashboard">
+  <div id="top-row">
+
+    <!-- RADAR PANEL -->
+    <div class="panel" id="panel-radar">
+      <div class="panel-header">
+        <span class="panel-title">⬡ Live Radar — South Florida</span>
+        <span class="panel-meta" id="radarMeta">Base Reflectivity · KAMX/KBYX · Animating</span>
+      </div>
+      <div class="panel-body">
+        <div id="radarMap"></div>
+        <div class="radar-timestamp" id="radarTimestamp">Loading radar...</div>
+        <div class="radar-legend">
+          <div class="radar-legend-title">dBZ</div>
+          <div class="radar-legend-bar">
+            <div style="background:#00ECEC"></div>
+            <div style="background:#01A0F6"></div>
+            <div style="background:#00FF00"></div>
+            <div style="background:#00C800"></div>
+            <div style="background:#FFFF00"></div>
+            <div style="background:#E7C000"></div>
+            <div style="background:#FF9000"></div>
+            <div style="background:#FF0000"></div>
+            <div style="background:#D60000"></div>
+            <div style="background:#C000C0"></div>
+          </div>
+          <div class="radar-legend-labels">
+            <span>5</span><span>35</span><span>65+</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT COLUMN -->
+    <div id="right-col">
+
+      <!-- FORECAST PANEL -->
+      <div class="panel" id="panel-forecast" style="overflow:hidden;">
+        <div class="panel-header">
+          <span class="panel-title">☀ Zone Forecast — FLZ072</span>
+          <span class="panel-meta" id="fcMeta">Loading...</span>
+        </div>
+        <div class="panel-body" style="overflow:hidden;">
+          <div id="forecast-grid" style="height:100%;">
+            <div class="fc-loading">Loading forecast...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- OBSERVATION PANEL -->
+      <div class="panel" id="panel-obs">
+        <div class="panel-header">
+          <span class="panel-title" id="obsTitle">📡 Latest Observation — KFXE</span>
+          <span class="panel-meta" id="obsMeta">Fort Lauderdale Executive Airport</span>
+        </div>
+        <div class="panel-body">
+          <div id="obs-grid">
+            <div class="fc-loading" style="grid-column:1/-1">Loading observation...</div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /right-col -->
+  </div><!-- /top-row -->
+
+  <!-- ALERTS BOTTOM ROW -->
+  <div id="bottom-row">
+    <div id="alerts-panel-header">
+      <span class="alerts-title">⚠ Active Alerts — Margate / FLZ072</span>
+      <span id="alertPills"></span>
+      <span class="spacer"></span>
+      <span class="meta" id="alertsMeta">Loading...</span>
+    </div>
+    <div id="alerts-scroll">
+      <div class="no-alerts-tile">Loading alerts...</div>
+    </div>
+  </div>
+
+  <!-- TICKER -->
+  <div id="ticker-bar">
+    <div class="ticker-label">MRG WX</div>
+    <div style="overflow:hidden;flex:1;">
+      <div class="ticker-scroll" id="ticker"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Leaflet JS -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+
+<script>
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  CONFIG
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+const MARGATE_LAT  = 26.2459;
+const MARGATE_LNG  = -80.2067;
+const NWS_ALERTS   = 'https://api.weather.gov/alerts/active?status=actual&zone=FLZ072';
+const NWS_FORECAST = 'https://api.weather.gov/gridpoints/MFL/110,37/forecast';
+// Margate FL gridpoint: MFL office, grid 110,37
+// Observation station fallback chain - tries each in order
+// Falls back if station hasn't reported in 75 minutes
+const OBS_STATIONS = [
+  { id: 'KFXE', name: 'Fort Lauderdale Executive' },
+  { id: 'KPMP', name: 'Pompano Beach Airpark' },
+  { id: 'KFLL', name: 'Fort Lauderdale-Hollywood Intl' },
+];
+let activeObsStation = OBS_STATIONS[0];
+let lastObsTime = null;
+const NWS_HEADERS  = { 'User-Agent':'MargateWxDash/1.0 (margatefl.com)', 'Accept':'application/geo+json' };
+
+const REFRESH_ALERTS   = 90_000;
+const REFRESH_FORECAST = 900_000;  // 15 min
+const REFRESH_OBS      = 300_000;  // 5 min
+const REFRESH_RADAR    = 300_000;  // 5 min
+
+let allAlerts    = [];
+let knownIds     = new Set();
+let expireTimers = new Map();
+let firstLoad    = true;
+let radarFrames  = [];
+let radarIdx     = 0;
+let radarLayer   = null;
+let radarAnim    = null;
+let map          = null;
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  CLOCK
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function updateClock() {
+  const n = new Date();
+  document.getElementById('clock').textContent =
+    n.toLocaleTimeString('en-US', { hour12:false });
+  document.getElementById('clockDate').textContent =
+    n.toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric', year:'numeric' });
+}
+setInterval(updateClock, 1000);
+updateClock();
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  RADAR — RainViewer
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function initMap() {
+  map = L.map('radarMap', {
+    center: [MARGATE_LAT, MARGATE_LNG],
+    zoom: 8,
+    zoomControl: true,
+    attributionControl: true,
+  });
+
+  // Base: CartoDB Positron No Labels — clean land/water/borders, no city clutter
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png', {
+    attribution: '© OpenStreetMap © CARTO',
+    subdomains: 'abcd',
+    maxZoom: 14,
+    zIndex: 1,
+  }).addTo(map);
+
+  // Dark tint so radar pops against light basemap
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png', {
+    attribution: '',
+    subdomains: 'abcd',
+    maxZoom: 14,
+    zIndex: 3,
+    opacity: 0.55,
+  }).addTo(map);
+
+  // Margate marker
+  const margateDot = L.divIcon({
+    className: 'margate-marker',
+    html: '<div class="margate-dot"></div>',
+    iconSize: [12,12], iconAnchor: [6,6],
+  });
+  L.marker([MARGATE_LAT, MARGATE_LNG], { icon: margateDot, zIndexOffset: 1000 })
+    .addTo(map);
+
+  // Load radar
+  loadRadar();
+}
+
+async function loadRadar() {
+  try {
+    const res  = await fetch('https://api.rainviewer.com/public/weather-maps.json');
+    const data = await res.json();
+    radarFrames = data.radar.past.slice(-10); // last 10 frames (~50 min)
+
+    if (radarLayer) { map.removeLayer(radarLayer); radarLayer = null; }
+    if (radarAnim)  clearInterval(radarAnim);
+
+    radarIdx = 0;
+    showRadarFrame(radarIdx);
+
+    radarAnim = setInterval(() => {
+      radarIdx = (radarIdx + 1) % radarFrames.length;
+      showRadarFrame(radarIdx);
+    }, 600);
+
+    document.getElementById('radarMeta').textContent =
+      'Base Reflectivity · ' + radarFrames.length + ' frames · Auto-animating';
+  } catch(e) {
+    document.getElementById('radarTimestamp').textContent = 'Radar unavailable';
+    console.error('Radar load error:', e);
+  }
+}
+
+function showRadarFrame(idx) {
+  const frame = radarFrames[idx];
+  if (!frame) return;
+
+  if (radarLayer) { map.removeLayer(radarLayer); }
+
+  radarLayer = L.tileLayer(
+    `https://tilecache.rainviewer.com${frame.path}/256/{z}/{x}/{y}/2/1_1.png`,
+    { opacity: 0.72, zIndex: 20, maxZoom: 14, attribution: '© RainViewer' }
+  );
+  radarLayer.addTo(map);
+
+  // Timestamp
+  const d = new Date(frame.time * 1000);
+  const ts = d.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:true});
+  const frameNum = idx + 1;
+  document.getElementById('radarTimestamp').textContent =
+    `Frame ${frameNum}/${radarFrames.length} · ${ts}`;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  WEATHER CONDITIONS → ICON + COLOR
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function wxIcon(shortForecast, isDaytime) {
+  const f = (shortForecast || '').toLowerCase();
+  if (f.includes('tornado'))             return '🌪';
+  if (f.includes('thunder') || f.includes('t-storm')) return '⛈';
+  if (f.includes('hurricane') || f.includes('tropical')) return '🌀';
+  if (f.includes('snow') || f.includes('blizzard'))  return '❄';
+  if (f.includes('sleet') || f.includes('ice'))      return '🌨';
+  if (f.includes('freezing rain'))       return '🌧';
+  if (f.includes('fog') || f.includes('mist'))       return '🌫';
+  if (f.includes('rain') || f.includes('shower'))    return '🌧';
+  if (f.includes('drizzle'))             return '🌦';
+  if (f.includes('partly cloudy') || f.includes('partly sunny')) return isDaytime ? '⛅' : '🌤';
+  if (f.includes('mostly cloudy') || f.includes('mostly sunny')) return '🌥';
+  if (f.includes('cloudy') || f.includes('overcast')) return '☁';
+  if (f.includes('wind') || f.includes('breezy') || f.includes('blustery')) return isDaytime ? '🌬' : '💨';
+  if (f.includes('hazy') || f.includes('smoke'))     return '😶‍🌫️';
+  if (f.includes('clear') || f.includes('sunny'))    return isDaytime ? '☀' : '🌙';
+  return isDaytime ? '🌤' : '🌙';
+}
+
+function tempColor(tempF) {
+  if (tempF >= 95) return '#FF4444';
+  if (tempF >= 85) return '#FF8844';
+  if (tempF >= 75) return '#FFD044';
+  if (tempF >= 65) return '#88DDFF';
+  if (tempF >= 50) return '#44BBFF';
+  return '#88AAFF';
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  FETCH FORECAST
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+async function fetchForecast() {
+  try {
+    // Step 1: get the correct gridpoint URL for Margate's exact lat/lon
+    // This avoids hardcoded grid coords that may be slightly off
+    let forecastUrl = NWS_FORECAST; // use cached gridpoint URL
+    if (!window._forecastUrl) {
+      const pointRes = await fetch(
+        `https://api.weather.gov/points/${MARGATE_LAT},${MARGATE_LNG}`,
+        { headers: NWS_HEADERS }
+      );
+      const pointData = await pointRes.json();
+      forecastUrl = pointData.properties.forecast;
+      window._forecastUrl = forecastUrl; // cache it
+    } else {
+      forecastUrl = window._forecastUrl;
+    }
+
+    // Step 2: fetch the actual forecast
+    const res  = await fetch(forecastUrl, { headers: NWS_HEADERS });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const periods = (data.properties && data.properties.periods) || [];
+    if (!periods.length) throw new Error('No periods returned');
+    renderForecast(periods);
+    document.getElementById('fcMeta').textContent =
+      'Updated ' + new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:true});
+  } catch(e) {
+    document.getElementById('forecast-grid').innerHTML =
+      '<div class="fc-loading">Forecast unavailable — ' + e.message + '</div>';
+    console.error('Forecast error:', e);
+  }
+}
+
+function renderForecast(periods) {
+  const grid = document.getElementById('forecast-grid');
+  // Take up to 6 periods (3 days/nights)
+  const shown = periods.slice(0, 3); // 3 periods — Today/Tonight/Tomorrow
+  if (!shown.length) {
+    grid.innerHTML = '<div class="fc-loading">No forecast data</div>';
+    return;
+  }
+
+  grid.innerHTML = shown.map(p => {
+    const icon    = wxIcon(p.shortForecast, p.isDaytime);
+    const temp    = p.temperature || '--';
+    const unit    = p.temperatureUnit || 'F';
+    const tColor  = typeof temp === 'number' ? tempColor(temp) : '#fff';
+    const wind    = p.windSpeed ? `${p.windDirection || ''} ${p.windSpeed}` : '';
+    const name    = p.name || '';
+    const isNight = !p.isDaytime;
+    // extract precip chance if present in detailedForecast
+    const precipMatch = (p.detailedForecast||'').match(/(\d+)\s*percent/i);
+    const precip = precipMatch ? precipMatch[1] + '% precip' : '';
+
+    return `
+      <div class="forecast-card ${isNight ? 'night' : 'day'}">
+        <div class="fc-period">${escHtml(name)}</div>
+        <div class="fc-icon">${icon}</div>
+        <div class="fc-temp" style="color:${tColor}">${temp}<span>°${unit}</span></div>
+        <div class="fc-short">${escHtml(p.shortForecast || '')}</div>
+        ${wind ? `<div class="fc-wind">💨 ${escHtml(wind)}</div>` : ''}
+        ${precip ? `<div class="fc-precip">💧 ${precip}</div>` : ''}
+      </div>
+    `;
+  }).join('');
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  FETCH OBSERVATION
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Fetch raw METAR text from aviationweather.gov — authoritative source for gusts
+async function fetchRawMetar(stationId) {
+  try {
+    const url = `https://aviationweather.gov/api/data/metar?ids=${stationId}&format=raw&hours=2`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const text = await res.text();
+    // Response is plain text, one METAR per line — take the first (most recent)
+    const lines = text.trim().split('\n').filter(l => l.trim().length > 0);
+    return lines[0] || null;
+  } catch(e) {
+    console.warn('METAR fetch failed for', stationId, e.message);
+    return null;
+  }
+}
+
+function parseMetarWind(metar) {
+  if (!metar) return { spd: null, gust: null, dir: null };
+  const m = metar.match(/\b(\d{3}|VRB)(\d{2,3})(?:G(\d{2,3}))?(KT|MPS|KMH)\b/i);
+  if (!m) return { spd: null, gust: null, dir: null };
+  const unit  = m[4].toUpperCase();
+  const toMph = unit === 'KT' ? 1.15078 : unit === 'MPS' ? 2.23694 : 0.62137;
+  const dir   = m[1] === 'VRB' ? null : parseInt(m[1]);
+  const spd   = Math.round(parseInt(m[2]) * toMph);
+  const gust  = m[3] ? Math.round(parseInt(m[3]) * toMph) : null;
+  return { spd, gust, dir };
+}
+
+function decodeMetarRemarks(metar) {
+  if (!metar) return [];
+  const rmkIdx = metar.indexOf(' RMK ');
+  if (rmkIdx === -1) return [];
+  const rmk = metar.slice(rmkIdx + 5).trim();
+  const decoded = [];
+
+  // AO1 / AO2 — station type
+  if (/\bAO1\b/.test(rmk)) decoded.push({ label: 'Station', value: 'Automated (no precipitation discriminator)' });
+  if (/\bAO2\b/.test(rmk)) decoded.push({ label: 'Station', value: 'Automated with precipitation discriminator' });
+
+  // SLP — sea level pressure e.g. SLP168 = 1016.8 hPa
+  const slp = rmk.match(/\bSLP(\d{3})\b/);
+  if (slp) {
+    const val = parseInt(slp[1]);
+    const hpa = val >= 550 ? (900 + val / 10) : (1000 + val / 10);
+    decoded.push({ label: 'Sea Level Pressure', value: hpa.toFixed(1) + ' hPa' });
+  }
+
+  // T group — precise temp/dew e.g. T01331039 = +13.3°C / +3.9°C dew
+  const tgrp = rmk.match(/\bT(0|1)(\d{3})(0|1)(\d{3})\b/);
+  if (tgrp) {
+    const tC  = (tgrp[1] === '1' ? -1 : 1) * parseInt(tgrp[2]) / 10;
+    const tF  = Math.round(tC * 9/5 + 32 * 10) / 10;
+    const dC  = (tgrp[3] === '1' ? -1 : 1) * parseInt(tgrp[4]) / 10;
+    const dF  = Math.round(dC * 9/5 + 32 * 10) / 10;
+    decoded.push({ label: 'Precise Temp', value: `${tF}°F (${tC.toFixed(1)}°C)` });
+    decoded.push({ label: 'Precise Dew', value: `${dF}°F (${dC.toFixed(1)}°C)` });
+  }
+
+  // 5xxxx pressure tendency e.g. 53019 = increasing then steady, 1.9 hPa/3hr
+  const ptend = rmk.match(/\b5(\d)(\d{3})\b/);
+  if (ptend) {
+    const chars = ['Increasing then decreasing','Increasing','Increasing then steady',
+                   'Increasing steadily','Steady or unsteady increasing',
+                   'Decreasing then increasing','Decreasing','Decreasing then steady',
+                   'Decreasing steadily'];
+    const val = parseInt(ptend[2]) / 10;
+    decoded.push({ label: '3hr Pressure Trend', value: `${chars[parseInt(ptend[1])] || '?'}, ${val} hPa` });
+  }
+
+  // TSNO — thunderstorm info not available
+  if (/\bTSNO\b/.test(rmk)) decoded.push({ label: 'Note', value: 'Thunderstorm info unavailable' });
+
+  // PWINO — precipitation identifier not available
+  if (/\bPWINO\b/.test(rmk)) decoded.push({ label: 'Note', value: 'Precip identifier inoperative' });
+
+  // $ — maintenance needed
+  if (/\$/.test(rmk)) decoded.push({ label: 'Maintenance', value: 'Station needs maintenance check' });
+
+  // Raw RMK string always included at bottom
+  decoded.push({ label: 'Raw RMK', value: rmk, raw: true });
+
+  return decoded;
+}
+
+async function fetchObservation() {
+  // Try each station in order; fall back if stale (>75 min) or unavailable
+  const STALE_MS = 75 * 60 * 1000;
+  for (let i = 0; i < OBS_STATIONS.length; i++) {
+    const station = OBS_STATIONS[i];
+    try {
+      const url = `https://api.weather.gov/stations/${station.id}/observations/latest`;
+      const res = await fetch(url, { headers: NWS_HEADERS });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const props = data.properties;
+
+      // Check if observation is stale (>75 min old)
+      const obsTime = props.timestamp ? new Date(props.timestamp) : null;
+      const ageMs = obsTime ? (Date.now() - obsTime) : Infinity;
+      if (ageMs > STALE_MS) {
+        console.warn(`${station.id} obs stale (${Math.round(ageMs/60000)} min) — trying next`);
+        continue;
+      }
+
+      // Fetch raw METAR in parallel for accurate wind/gust data
+      const rawMetar = await fetchRawMetar(station.id);
+      const metarWind = parseMetarWind(rawMetar);
+
+      // Good observation — render it
+      activeObsStation = station;
+      lastObsTime = obsTime;
+      renderObservation(props, station, metarWind, rawMetar);
+      document.getElementById('obsMeta').textContent =
+        `${station.id} · ${station.name} · ` +
+        (obsTime ? obsTime.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:true}) : '--');
+      document.getElementById('obsTitle').innerHTML =
+        `📡 Latest Observation — ${station.id}${station.id !== 'KFXE' ? ' <span style="color:var(--gold-light);font-size:10px">(fallback)</span>' : ''}`;
+      return;
+    } catch(e) {
+      console.warn(`${station.id} failed:`, e.message);
+    }
+  }
+  document.getElementById('obs-grid').innerHTML =
+    '<div class="fc-loading" style="grid-column:1/-1">All observation stations unavailable</div>';
+}
+
+function cToF(c) { return c == null ? null : Math.round(c * 9/5 + 32); }
+
+// NWS observation API returns wind in km/h (wmoUnit:km_h-1)
+// Check unitCode and convert accordingly
+function windToMph(val, unitCode) {
+  if (val == null) return null;
+  const u = (unitCode || '').toLowerCase();
+  let mph;
+  if (u.includes('km_h') || u.includes('km/h'))  mph = val * 0.6214;
+  else if (u.includes('knot') || u.includes('[kn_i]')) mph = val * 1.15078;
+  else if (u.includes('m_s')  || u.includes('m/s'))    mph = val * 2.23694;
+  else mph = val * 0.6214; // default: km/h
+  return Math.round(mph);
+}
+
+function paToInHg(pa) { return pa == null ? null : (pa / 3386.389).toFixed(2); }
+function mToMi(m)  { return m == null ? null : (m / 1609.34).toFixed(1); }
+
+function windDirArrow(deg) {
+  if (deg == null) return '';
+  // Arrow points the direction wind is COMING FROM
+  return `<span class="wind-arrow" style="display:inline-block;transform:rotate(${deg}deg)">↑</span>`;
+}
+
+function flightCategory(vis, ceil) {
+  // vis in meters, ceil in meters
+  const visMi  = vis  ? vis / 1609.34  : 999;
+  const ceilFt = ceil ? ceil * 3.28084 : 99999;
+  if (visMi < 1    || ceilFt < 500)   return 'LIFR';
+  if (visMi < 3    || ceilFt < 1000)  return 'IFR';
+  if (visMi < 5    || ceilFt < 3000)  return 'MVFR';
+  return 'VFR';
+}
+
+function renderObservation(p, station, metarWind, rawMetar) {
+  const tempF    = cToF(p.temperature?.value);
+  const dewF     = cToF(p.dewpoint?.value);
+  const feelsF   = cToF(p.heatIndex?.value || p.windChill?.value);
+  // METAR is authoritative for wind — use it as primary source if available
+  // API structured fields used only as fallback
+  let windSpd, windGust;
+  if (metarWind && metarWind.spd != null) {
+    windSpd  = metarWind.spd;
+    windGust = metarWind.gust;  // null if no G group in METAR = truly no gusts
+  } else {
+    // Fallback to NWS API fields (may have unit confusion)
+    windSpd  = windToMph(p.windSpeed?.value,  p.windSpeed?.unitCode);
+    windGust = windToMph(p.windGust?.value,   p.windGust?.unitCode);
+  }
+  // Use METAR wind direction if available (more reliable than API)
+  const windDir = (metarWind?.dir != null) ? metarWind.dir : p.windDirection?.value;
+  const pressInHg = paToInHg(p.altimeterSetting?.value || p.barometricPressure?.value);
+  const visMi    = mToMi(p.visibility?.value);
+  const humid    = p.relativeHumidity?.value ? Math.round(p.relativeHumidity.value) : null;
+  const sky      = p.textDescription || 'Unknown';
+  // Ceiling from cloud layers
+  const ceilLayer = (p.cloudLayers||[]).find(l => ['BKN','OVC'].includes(l.amount));
+  const ceilFt   = ceilLayer ? Math.round(ceilLayer.base.value * 3.28084) : null;
+  const flCat    = flightCategory(p.visibility?.value, ceilLayer?.base?.value);
+  const icon     = wxIcon(sky, true);
+  const tColor   = tempF != null ? tempColor(tempF) : '#fff';
+  // Use resolved windDir (METAR preferred) for cardinal display
+  const windDirCardinal = windDir != null ? degToCardinal(windDir) : '';
+
+  // Build decoded remarks block
+  const decodedRmks = decodeMetarRemarks(rawMetar);
+  const remarksHTML = decodedRmks.length ? `
+    <div class="obs-remarks">
+      <div class="obs-remarks-title">📋 METAR Remarks</div>
+      <div class="obs-remarks-items">
+        ${decodedRmks.filter(r => !r.raw).map(r =>
+          `<div class="obs-rmk-item"><span class="obs-rmk-label">${escHtml(r.label)}:</span> ${escHtml(r.value)}</div>`
+        ).join('')}
+      </div>
+      ${decodedRmks.find(r => r.raw) ? `<div class="obs-rmk-raw">${escHtml(rawMetar || '')}</div>` : ''}
+    </div>
+  ` : '';
+
+  document.getElementById('obs-grid').innerHTML = \`
+    <div class="obs-hero">
+      <div class="obs-hero-icon">${icon}</div>
+      <div class="obs-hero-temp" style="color:${tColor}">${tempF ?? '--'}<span>°F</span></div>
+      <div class="obs-hero-desc">
+        <div class="obs-hero-sky">${escHtml(sky)}</div>
+        <div class="obs-hero-feel">${feelsF != null ? `Feels like ${feelsF}°F` : `Dew ${dewF ?? '--'}°F`}</div>
+      </div>
+      <div class="obs-flight ${flCat}">${flCat}</div>
+    </div>
+
+    <div class="obs-stat">
+      <div class="obs-stat-label">Wind</div>
+      <div class="obs-stat-value">
+        ${windDirCardinal} ${windDir != null ? windDirArrow(windDir) : ''} ${windSpd ?? '--'} mph
+      </div>
+      ${windGust
+        ? `<div class="obs-stat-gust">Gusts ${windGust} mph</div>`
+        : `<div class="obs-stat-sub">No gusts reported</div>`}
+    </div>
+
+    <div class="obs-stat">
+      <div class="obs-stat-label">Humidity</div>
+      <div class="obs-stat-value">${humid ?? '--'}%</div>
+      <div class="obs-stat-sub">Dew ${dewF ?? '--'}°F</div>
+    </div>
+
+    <div class="obs-stat">
+      <div class="obs-stat-label">Pressure</div>
+      <div class="obs-stat-value">${pressInHg ?? '--'}"</div>
+      <div class="obs-stat-sub">Altimeter</div>
+    </div>
+
+    <div class="obs-stat">
+      <div class="obs-stat-label">Visibility</div>
+      <div class="obs-stat-value">${visMi ?? '--'} mi</div>
+      ${ceilFt ? `<div class="obs-stat-sub">Ceiling ${ceilFt.toLocaleString()} ft</div>` : '<div class="obs-stat-sub">Clear</div>'}
+    </div>
+    ${remarksHTML}
+  `;
+}
+
+function degToCardinal(deg) {
+  const dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+  return dirs[Math.round(deg / 22.5) % 16];
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  SEVERITY HELPERS
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function getSevClass(event) {
+  const e = (event||'').toLowerCase();
+  if (e.includes(' warning'))  return 'warning';
+  if (e.includes('watch'))     return 'watch';
+  if (e.includes('special weather') || e.includes('urgent')) return 'special';
+  if (e.includes('advisory'))  return 'advisory';
+  return 'statement';
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  POLYGON CHECK — point in polygon
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function pointInPolygon(lat, lng, polygon) {
+  // polygon is array of [lng, lat] pairs (GeoJSON order)
+  let inside = false;
+  const x = lng, y = lat;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const xi = polygon[i][0], yi = polygon[i][1];
+    const xj = polygon[j][0], yj = polygon[j][1];
+    if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+function alertAffectsMargate(feature) {
+  const geom = feature.geometry;
+  if (!geom) return true; // zone-based, already filtered by API
+  if (geom.type === 'Polygon') {
+    return pointInPolygon(MARGATE_LAT, MARGATE_LNG, geom.coordinates[0]);
+  }
+  if (geom.type === 'MultiPolygon') {
+    return geom.coordinates.some(poly => pointInPolygon(MARGATE_LAT, MARGATE_LNG, poly[0]));
+  }
+  return true;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  FETCH ALERTS
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+async function fetchAlerts() {
+  setStatus('loading');
+  try {
+    const res  = await fetch(NWS_ALERTS, { headers: NWS_HEADERS });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    processAlerts(data.features || []);
+    setStatus('ok');
+  } catch(e) {
+    console.error('Alerts error:', e);
+    setStatus('error');
+    if (firstLoad) {
+      document.getElementById('alerts-scroll').innerHTML =
+        '<div class="no-alerts-tile">Alerts unavailable — ' + e.message + '</div>';
+    }
+  }
+  firstLoad = false;
+}
+
+function setStatus(s) {
+  const pip = document.getElementById('statusPip');
+  pip.className = 'status-pip' + (s==='ok'?'': s==='loading'?' loading':' error');
+}
+
+function processAlerts(features) {
+  const now = new Date();
+  const fresh = [];
+  const freshIds = new Set();
+
+  features.forEach(f => {
+    const props   = f.properties;
+    const expires = props.expires ? new Date(props.expires) : null;
+    if (expires && expires < now) return;
+    if (!alertAffectsMargate(f)) return;
+
+    const id      = props.id || f.id;
+    freshIds.add(id);
+    const sent    = props.sent      ? new Date(props.sent)
+                  : props.effective ? new Date(props.effective)
+                  : now;
+
+    fresh.push({
+      id, sent, expires,
+      event:    props.event || '',
+      areas:    props.areaDesc || '',
+      onset:    props.onset ? new Date(props.onset) : sent,
+      sender:   props.senderName || 'NWS MFL',
+      sevClass: getSevClass(props.event),
+      isNew:    !knownIds.has(id),
+      remark:   extractRemark(props.description || ''),
+    });
+  });
+
+  const brandNew = fresh.filter(a => a.isNew);
+  if (!firstLoad && brandNew.length > 0) flashNewAlert(brandNew);
+
+  knownIds  = freshIds;
+  allAlerts = fresh.sort((a,b) => b.sent - a.sent);
+
+  renderAlerts();
+  renderTicker();
+  updateAlertPills();
+
+  document.getElementById('alertsMeta').textContent =
+    `${allAlerts.length} Active · Updated ${new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:true})}`;
+}
+
+function flashNewAlert(items) {
+  // Brief gold flash on header border
+  const hdr = document.getElementById('header');
+  hdr.style.borderBottomColor = '#FF4444';
+  setTimeout(() => hdr.style.borderBottomColor = 'var(--gold)', 2000);
+}
+
+let alertCycleTimer = null;
+let alertCycleIdx   = 0;
+
+function renderAlerts() {
+  const scroll = document.getElementById('alerts-scroll');
+  expireTimers.forEach(t => clearTimeout(t));
+  expireTimers.clear();
+  if (alertCycleTimer) { clearInterval(alertCycleTimer); alertCycleTimer = null; }
+
+  if (!allAlerts.length) {
+    scroll.innerHTML = '<div class="no-alerts-tile">☀ No Active Alerts for Margate / FLZ072</div>';
+    return;
+  }
+
+  // ≤4 alerts: show all as tiles side by side
+  if (allAlerts.length <= 4) {
+    scroll.innerHTML = '';
+    allAlerts.forEach(a => {
+      const tile = buildTile(a);
+      scroll.appendChild(tile);
+      scheduleExpire(a, tile);
+    });
+    return;
+  }
+
+  // >4 alerts: auto-cycle through them with dot indicators
+  alertCycleIdx = 0;
+  renderCycledAlert(scroll);
+  alertCycleTimer = setInterval(() => {
+    alertCycleIdx = (alertCycleIdx + 1) % allAlerts.length;
+    renderCycledAlert(scroll);
+  }, 8000); // rotate every 8 seconds
+}
+
+function renderCycledAlert(scroll) {
+  const a = allAlerts[alertCycleIdx];
+  if (!a) return;
+
+  // Build tile
+  const tile = buildTile(a);
+  tile.classList.add('wide');
+  tile.style.animation = 'tileIn .4s ease-out';
+
+  // Build dot indicators
+  const dotsHTML = allAlerts.map((al, i) =>
+    `<div class="cycle-dot ${i === alertCycleIdx ? 'active' : ''}" title="${escHtml(al.event)}"></div>`
+  ).join('');
+
+  scroll.innerHTML = '';
+  scroll.appendChild(tile);
+
+  // Add cycle info
+  const info = document.createElement('div');
+  info.style.cssText = 'display:flex;flex-direction:column;justify-content:center;gap:6px;padding:0 8px;flex-shrink:0;';
+  info.innerHTML = `
+    <div style="font-family:'Oswald',sans-serif;font-size:10px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;">${alertCycleIdx+1} / ${allAlerts.length}</div>
+    <div class="alert-cycle-dots">${dotsHTML}</div>
+    <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--muted);">Auto-cycling 8s</div>
+  `;
+  scroll.appendChild(info);
+}
+
+function buildTile(a) {
+  const tile = document.createElement('div');
+  tile.className = `alert-tile ${a.sevClass}`;
+  tile.dataset.id = a.id;
+
+  let pct = 100, expStr = '', expClass = '';
+  if (a.expires) {
+    const minsLeft  = Math.round((a.expires - Date.now()) / 60000);
+    const totalMins = Math.max(1, Math.round((a.expires - a.onset) / 60000));
+    pct = Math.max(0, Math.min(100, (minsLeft/totalMins)*100));
+    expClass = minsLeft < 30 ? 'color:var(--warning)' : minsLeft < 90 ? 'color:var(--watch)' : 'color:var(--muted)';
+    expStr = `Exp ${a.expires.toLocaleDateString('en-US',{month:'short',day:'numeric'})} ${a.expires.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:true})}`;
+  }
+
+  const area1 = a.areas.split(';')[0].trim();
+
+  tile.innerHTML = `
+    <div class="tile-event">${escHtml(a.event)}</div>
+    <div class="tile-issued">Issued: ${a.sent.toLocaleDateString('en-US',{month:'short',day:'numeric'})} ${a.sent.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:true})}</div>
+    <div class="tile-area">${escHtml(area1)}</div>
+    <div class="tile-expires" style="${expClass}">${expStr}</div>
+    <div class="tile-bar"><div class="tile-bar-fill" style="width:${pct}%"></div></div>
+  `;
+  return tile;
+}
+
+function scheduleExpire(a, tile) {
+  if (!a.expires) return;
+  const ms = a.expires - Date.now();
+  if (ms <= 0) { tile.remove(); return; }
+  const t = setTimeout(() => {
+    tile.classList.add('expiring');
+    setTimeout(() => { tile.remove(); updateAlertPills(); }, 900);
+  }, ms);
+  expireTimers.set(a.id, t);
+}
+
+function updateAlertPills() {
+  const counts = { warning:0, watch:0, advisory:0, statement:0, special:0 };
+  allAlerts.forEach(a => { if (counts[a.sevClass] !== undefined) counts[a.sevClass]++; });
+  const pills = document.getElementById('alertPills');
+  pills.innerHTML = Object.entries(counts)
+    .filter(([,n]) => n > 0)
+    .map(([cls,n]) => `<span class="alert-pill pill-${cls}">${n} ${cls}${n>1?'s':''}</span>`)
+    .join(' ');
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  TICKER
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function renderTicker() {
+  const ticker = document.getElementById('ticker');
+
+  // Build single set of items
+  const makeItems = (alerts) => alerts.map(a => `
+    <div class="ticker-item ${a.sevClass}">
+      <div class="ticker-dot"></div>
+      ${escHtml(a.event)} &nbsp;·&nbsp;
+      ${escHtml((a.areas.split(';')[0]||'').trim())}
+      ${a.expires ? ` &nbsp;·&nbsp; Exp ${a.expires.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:true})}` : ''}
+      &nbsp;&nbsp;&nbsp;⬥&nbsp;&nbsp;&nbsp;
+    </div>
+  `).join('');
+
+  if (!allAlerts.length) {
+    ticker.innerHTML = '<div class="ticker-item" style="color:var(--muted);padding:0 30px">No active alerts for Margate / FLZ072 &nbsp;☀&nbsp;&nbsp;&nbsp;⬥&nbsp;&nbsp;&nbsp;No active alerts for Margate / FLZ072 &nbsp;☀&nbsp;&nbsp;&nbsp;⬥&nbsp;&nbsp;&nbsp;</div>';
+    ticker.style.animation = 'none';
+    // Use a simple looping animation for no-alert state
+    startTickerAnim(ticker, 20);
+    return;
+  }
+
+  // Render single set first, measure width, then duplicate enough to fill
+  ticker.style.animation = 'none';
+  ticker.innerHTML = makeItems(allAlerts);
+
+  // After paint, measure and duplicate
+  requestAnimationFrame(() => {
+    const singleWidth = ticker.scrollWidth;
+    const containerWidth = ticker.parentElement.offsetWidth;
+    // Need enough copies to fill 2× container width for seamless loop
+    const copies = Math.max(2, Math.ceil((containerWidth * 2.5) / singleWidth));
+    let html = '';
+    for (let i = 0; i < copies; i++) html += makeItems(allAlerts);
+    ticker.innerHTML = html;
+
+    // Speed: ~80px/sec feels like broadcast TV crawl
+    const totalWidth = singleWidth * copies;
+    const halfWidth  = singleWidth * Math.floor(copies / 2);
+    const speed      = 80; // px per second
+    const duration   = (halfWidth / speed).toFixed(1);
+
+    // Inject a unique keyframe for this run
+    const styleId = 'tickerKF';
+    let styleEl = document.getElementById(styleId);
+    if (!styleEl) { styleEl = document.createElement('style'); styleEl.id = styleId; document.head.appendChild(styleEl); }
+    styleEl.textContent = `@keyframes tickerRun { 0%{transform:translateX(0)} 100%{transform:translateX(-${halfWidth}px)} }`;
+
+    ticker.style.animation = `tickerRun ${duration}s linear infinite`;
+  });
+}
+
+function startTickerAnim(ticker, seconds) {
+  const styleId = 'tickerKF';
+  let styleEl = document.getElementById(styleId);
+  if (!styleEl) { styleEl = document.createElement('style'); styleEl.id = styleId; document.head.appendChild(styleEl); }
+  const w = ticker.scrollWidth / 2;
+  styleEl.textContent = `@keyframes tickerRun { 0%{transform:translateX(0)} 100%{transform:translateX(-${w}px)} }`;
+  ticker.style.animation = `tickerRun ${seconds}s linear infinite`;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  HELPERS
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function extractRemark(desc) {
+  const m = desc.match(/REMARKS?\.\.\.\s*(.+?)(?:\n\n|$)/is);
+  if (m) return m[1].replace(/\n/g,' ').trim();
+  return desc.slice(0,200).replace(/\n/g,' ').trim();
+}
+function escHtml(s) {
+  return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  COUNTDOWN BAR TICK
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+setInterval(() => {
+  document.querySelectorAll('.alert-tile').forEach(tile => {
+    const a = allAlerts.find(x => x.id === tile.dataset.id);
+    if (!a || !a.expires) return;
+    const minsLeft  = Math.round((a.expires - Date.now()) / 60000);
+    const totalMins = Math.max(1, Math.round((a.expires - a.onset) / 60000));
+    const pct = Math.max(0, Math.min(100, (minsLeft/totalMins)*100));
+    const fill = tile.querySelector('.tile-bar-fill');
+    if (fill) fill.style.width = pct + '%';
+  });
+}, 60_000);
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  BOOT + AUTO-REFRESH
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+window.addEventListener('load', () => {
+  initMap();
+  fetchAlerts();
+  fetchForecast();
+  fetchObservation();
+
+  setInterval(fetchAlerts,      REFRESH_ALERTS);
+  setInterval(fetchForecast,    REFRESH_FORECAST);
+  setInterval(fetchObservation, REFRESH_OBS);
+  setInterval(loadRadar,        REFRESH_RADAR);
+});
+</script>
+</body>
+</html>
 
