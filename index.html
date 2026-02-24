@@ -1090,14 +1090,18 @@ function renderForecast(periods) {
 async function fetchRawMetar(stationId) {
   try {
     const url = `https://aviationweather.gov/api/data/metar?ids=${stationId}&format=raw&hours=2`;
-    const res = await fetch(url);
+    // 4-second timeout — if CORS blocks or server is slow, never hold up the page
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 4000);
+    const res = await fetch(url, { signal: controller.signal });
+    clearTimeout(timer);
     if (!res.ok) return null;
     const text = await res.text();
-    // Response is plain text, one METAR per line — take the first (most recent)
     const lines = text.trim().split('\n').filter(l => l.trim().length > 0);
     return lines[0] || null;
   } catch(e) {
-    console.warn('METAR fetch failed for', stationId, e.message);
+    // AbortError = timeout, TypeError = CORS block — both are silent fallbacks
+    console.warn('METAR fetch failed for', stationId, '—', e.message);
     return null;
   }
 }
@@ -1232,19 +1236,23 @@ async function fetchObservation() {
         continue;
       }
 
-      // Fetch raw METAR in parallel for accurate wind/gust data
-      const rawMetar = await fetchRawMetar(station.id);
-      const metarWind = parseMetarWind(rawMetar);
-
-      // Good observation — render it
+      // Render immediately with NWS API data so page is never blocked
       activeObsStation = station;
       lastObsTime = obsTime;
-      renderObservation(props, station, metarWind, rawMetar);
+      renderObservation(props, station, null, null);
       document.getElementById('obsMeta').textContent =
         `${station.id} · ${station.name} · ` +
         (obsTime ? obsTime.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:true}) : '--');
       document.getElementById('obsTitle').innerHTML =
         `📡 Latest Observation — ${station.id}${station.id !== 'KFXE' ? ' <span style="color:var(--gold-light);font-size:10px">(fallback)</span>' : ''}`;
+
+      // Then fetch raw METAR in background — update display if it arrives within 4s
+      fetchRawMetar(station.id).then(rawMetar => {
+        if (!rawMetar) return; // CORS blocked or timed out — NWS data stands
+        const metarWind = parseMetarWind(rawMetar);
+        renderObservation(props, station, metarWind, rawMetar);
+        console.log('METAR update applied:', rawMetar);
+      });
       return;
     } catch(e) {
       console.warn(`${station.id} failed:`, e.message);
