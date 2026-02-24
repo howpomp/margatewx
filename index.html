@@ -1114,6 +1114,48 @@ function parseMetarWind(metar) {
   return { spd, gust, dir };
 }
 
+function parseMetarTempDew(metar) {
+  // Parses METAR temp/dew group: e.g. 13/M04  or  22/18  or  M02/M05
+  // Returns { tempC, dewC } or nulls if not found
+  if (!metar) return { tempC: null, dewC: null };
+  const m = metar.match(/\b(M?\d{2})\/(M?\d{2})\b/);
+  if (!m) return { tempC: null, dewC: null };
+  const parseVal = s => s.startsWith('M') ? -parseInt(s.slice(1)) : parseInt(s);
+  return {
+    tempC: parseVal(m[1]),
+    dewC:  parseVal(m[2]),
+  };
+}
+
+function calcRelativeHumidity(tempC, dewC) {
+  // Magnus formula approximation
+  if (tempC == null || dewC == null) return null;
+  const rh = 100 * Math.exp((17.625 * dewC) / (243.04 + dewC)) /
+                   Math.exp((17.625 * tempC) / (243.04 + tempC));
+  return Math.round(Math.min(100, Math.max(0, rh)));
+}
+
+function calcFeelsLike(tempF, dewF, windMph) {
+  // Heat index if hot, wind chill if cold, otherwise just temp
+  if (tempF == null) return null;
+  if (tempF >= 80 && dewF != null) {
+    // Rothfusz heat index
+    const T = tempF, R = calcRelativeHumidity(
+      (tempF - 32) * 5/9, dewF != null ? (dewF - 32) * 5/9 : null
+    ) ?? 50;
+    const hi = -42.379 + 2.04901523*T + 10.14333127*R - 0.22475541*T*R
+               - 0.00683783*T*T - 0.05481717*R*R + 0.00122874*T*T*R
+               + 0.00085282*T*R*R - 0.00000199*T*T*R*R;
+    return Math.round(hi);
+  }
+  if (tempF <= 50 && windMph != null && windMph >= 3) {
+    // NWS wind chill formula
+    const wc = 35.74 + 0.6215*tempF - 35.75*Math.pow(windMph,0.16) + 0.4275*tempF*Math.pow(windMph,0.16);
+    return Math.round(wc);
+  }
+  return null;
+}
+
 function decodeMetarRemarks(metar) {
   if (!metar) return [];
   const rmkIdx = metar.indexOf(' RMK ');
@@ -1247,9 +1289,21 @@ function flightCategory(vis, ceil) {
 }
 
 function renderObservation(p, station, metarWind, rawMetar) {
-  const tempF    = cToF(p.temperature?.value);
-  const dewF     = cToF(p.dewpoint?.value);
-  const feelsF   = cToF(p.heatIndex?.value || p.windChill?.value);
+  // Parse temp/dew from raw METAR first (most reliable when API returns null)
+  const metarTD = parseMetarTempDew(rawMetar);
+
+  // Temp: use METAR if API is null
+  const tempC = p.temperature?.value ?? metarTD.tempC;
+  const tempF = cToF(tempC);
+
+  // Dew: use METAR if API is null
+  const dewC  = p.dewpoint?.value ?? metarTD.dewC;
+  const dewF  = cToF(dewC);
+
+  // Humidity: use API if available, else calculate from temp+dew
+  const humid = p.relativeHumidity?.value
+    ? Math.round(p.relativeHumidity.value)
+    : calcRelativeHumidity(tempC, dewC);
   // METAR is authoritative for wind — use it as primary source if available
   // API structured fields used only as fallback
   let windSpd, windGust;
@@ -1265,7 +1319,7 @@ function renderObservation(p, station, metarWind, rawMetar) {
   const windDir = (metarWind?.dir != null) ? metarWind.dir : p.windDirection?.value;
   const pressInHg = paToInHg(p.altimeterSetting?.value || p.barometricPressure?.value);
   const visMi    = mToMi(p.visibility?.value);
-  const humid    = p.relativeHumidity?.value ? Math.round(p.relativeHumidity.value) : null;
+  // humid already computed above from METAR or API
   const sky      = p.textDescription || 'Unknown';
   // Ceiling from cloud layers
   const ceilLayer = (p.cloudLayers||[]).find(l => ['BKN','OVC'].includes(l.amount));
@@ -1275,6 +1329,11 @@ function renderObservation(p, station, metarWind, rawMetar) {
   const tColor   = tempF != null ? tempColor(tempF) : '#fff';
   // Use resolved windDir (METAR preferred) for cardinal display
   const windDirCardinal = windDir != null ? degToCardinal(windDir) : '';
+
+  // Calculate feels-like now that we have temp, dew, and wind
+  const feelsF = p.heatIndex?.value != null ? cToF(p.heatIndex.value)
+               : p.windChill?.value  != null ? cToF(p.windChill.value)
+               : calcFeelsLike(tempF, dewF, windSpd);
 
   // Build decoded remarks block
   const decodedRmks = decodeMetarRemarks(rawMetar);
