@@ -385,7 +385,7 @@ html, body {
   padding: 8px 10px;
   display: grid;
   grid-template-columns: 1fr 1fr;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto 1fr auto;
   gap: 6px;
   height: 100%;
   overflow: hidden;
@@ -941,50 +941,69 @@ function initMap() {
   loadRadar();
 }
 
+// NWS Ridge2 radar — US government servers, no geo-blocking
+// Fetches the last 10 available frames from the NWS catalog
+// Product: N0B (Base Reflectivity) for KAMX (Miami) covers South Florida
+const NWS_RADAR_STATIONS = ['KAMX', 'KBYX']; // Miami + Key West dual coverage
+const NWS_RADAR_BASE = 'https://opengeo.ncep.noaa.gov/geoserver/';
+
 async function loadRadar() {
   try {
-    const res  = await fetch('https://api.rainviewer.com/public/weather-maps.json');
-    const data = await res.json();
-    radarFrames = data.radar.past.slice(-10); // last 10 frames (~50 min)
-
+    // Use NWS MapServer WMS — single current image, US-hosted, always available
+    // This is the same source as weather.gov's own radar display
     if (radarLayer) { map.removeLayer(radarLayer); radarLayer = null; }
-    if (radarAnim)  clearInterval(radarAnim);
+    if (radarAnim)  { clearInterval(radarAnim); radarAnim = null; }
 
-    radarIdx = 0;
-    showRadarFrame(radarIdx);
+    // Load CONUS radar mosaic from NWS GeoServer — tiled WMS
+    radarLayer = L.tileLayer.wms(
+      'https://opengeo.ncep.noaa.gov/geoserver/conus/ows',
+      {
+        layers: 'conus_bref_qcd',
+        format: 'image/png',
+        transparent: true,
+        version: '1.3.0',
+        opacity: 0.75,
+        zIndex: 20,
+        attribution: '© NOAA/NWS',
+        // Cache-bust every 2 min to get latest scan
+        _ts: Math.floor(Date.now() / 120000),
+      }
+    );
+    radarLayer.addTo(map);
 
+    const ts = new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:true});
+    document.getElementById('radarTimestamp').textContent = `Updated ${ts}`;
+    document.getElementById('radarMeta').textContent = 'Base Reflectivity · NWS CONUS Mosaic · Live';
+
+    // Auto-refresh radar tile every 2 minutes by reloading with new cache-bust param
     radarAnim = setInterval(() => {
-      radarIdx = (radarIdx + 1) % radarFrames.length;
-      showRadarFrame(radarIdx);
-    }, 600);
+      if (radarLayer) { map.removeLayer(radarLayer); }
+      radarLayer = L.tileLayer.wms(
+        'https://opengeo.ncep.noaa.gov/geoserver/conus/ows',
+        {
+          layers: 'conus_bref_qcd',
+          format: 'image/png',
+          transparent: true,
+          version: '1.3.0',
+          opacity: 0.75,
+          zIndex: 20,
+          attribution: '© NOAA/NWS',
+          _ts: Math.floor(Date.now() / 120000),
+        }
+      );
+      radarLayer.addTo(map);
+      const t = new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:true});
+      document.getElementById('radarTimestamp').textContent = `Updated ${t}`;
+    }, 120_000); // refresh every 2 minutes
 
-    document.getElementById('radarMeta').textContent =
-      'Base Reflectivity · ' + radarFrames.length + ' frames · Auto-animating';
   } catch(e) {
     document.getElementById('radarTimestamp').textContent = 'Radar unavailable';
     console.error('Radar load error:', e);
   }
 }
 
-function showRadarFrame(idx) {
-  const frame = radarFrames[idx];
-  if (!frame) return;
-
-  if (radarLayer) { map.removeLayer(radarLayer); }
-
-  radarLayer = L.tileLayer(
-    `https://tilecache.rainviewer.com${frame.path}/256/{z}/{x}/{y}/2/1_1.png`,
-    { opacity: 0.72, zIndex: 20, maxZoom: 14, attribution: '© RainViewer' }
-  );
-  radarLayer.addTo(map);
-
-  // Timestamp
-  const d = new Date(frame.time * 1000);
-  const ts = d.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:true});
-  const frameNum = idx + 1;
-  document.getElementById('radarTimestamp').textContent =
-    `Frame ${frameNum}/${radarFrames.length} · ${ts}`;
-}
+// Stub for compatibility (called by setInterval in boot)
+function showRadarFrame(idx) {}
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  WEATHER CONDITIONS → ICON + COLOR
@@ -1091,20 +1110,58 @@ function renderForecast(periods) {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  FETCH OBSERVATION
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// Fetch raw METAR text from aviationweather.gov — authoritative source for gusts
+// Fetch raw METAR — 4s hard timeout so city network blocks never hang the page
 async function fetchRawMetar(stationId) {
   try {
     const url = `https://aviationweather.gov/api/data/metar?ids=${stationId}&format=raw&hours=2`;
-    const res = await fetch(url);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 4000);
+    const res = await fetch(url, { signal: controller.signal });
+    clearTimeout(timer);
     if (!res.ok) return null;
     const text = await res.text();
-    // Response is plain text, one METAR per line — take the first (most recent)
     const lines = text.trim().split('\n').filter(l => l.trim().length > 0);
     return lines[0] || null;
   } catch(e) {
-    console.warn('METAR fetch failed for', stationId, e.message);
+    // AbortError = timeout/blocked — silent fallback, never hangs
     return null;
   }
+}
+
+// Parse temp/dew from METAR body: e.g. 13/M04  22/18  M02/M05
+function parseMetarTempDew(metar) {
+  if (!metar) return { tempC: null, dewC: null };
+  const m = metar.match(/\b(M?\d{2})\/(M?\d{2})\b/);
+  if (!m) return { tempC: null, dewC: null };
+  const parseVal = s => s.startsWith('M') ? -parseInt(s.slice(1)) : parseInt(s);
+  return { tempC: parseVal(m[1]), dewC: parseVal(m[2]) };
+}
+
+// Magnus formula: relative humidity from temp + dew (both °C)
+function calcRelativeHumidity(tempC, dewC) {
+  if (tempC == null || dewC == null) return null;
+  const rh = 100 * Math.exp((17.625 * dewC) / (243.04 + dewC))
+                 / Math.exp((17.625 * tempC) / (243.04 + tempC));
+  return Math.round(Math.min(100, Math.max(0, rh)));
+}
+
+// NWS wind chill / heat index feels-like
+function calcFeelsLike(tempF, dewF, windMph) {
+  if (tempF == null) return null;
+  if (tempF <= 50 && windMph != null && windMph >= 3) {
+    const wc = 35.74 + 0.6215*tempF - 35.75*Math.pow(windMph,0.16)
+             + 0.4275*tempF*Math.pow(windMph,0.16);
+    return Math.round(wc);
+  }
+  if (tempF >= 80 && dewF != null) {
+    const R = calcRelativeHumidity((tempF-32)*5/9, (dewF-32)*5/9) ?? 50;
+    const T = tempF;
+    const hi = -42.379 + 2.04901523*T + 10.14333127*R - 0.22475541*T*R
+               - 0.00683783*T*T - 0.05481717*R*R + 0.00122874*T*T*R
+               + 0.00085282*T*R*R - 0.00000199*T*T*R*R;
+    return Math.round(hi);
+  }
+  return null;
 }
 
 function parseMetarWind(metar) {
@@ -1121,7 +1178,6 @@ function parseMetarWind(metar) {
 }
 
 async function fetchObservation() {
-  // Try each station in order; fall back if stale (>75 min) or unavailable
   const STALE_MS = 75 * 60 * 1000;
   for (let i = 0; i < OBS_STATIONS.length; i++) {
     const station = OBS_STATIONS[i];
@@ -1132,7 +1188,6 @@ async function fetchObservation() {
       const data = await res.json();
       const props = data.properties;
 
-      // Check if observation is stale (>75 min old)
       const obsTime = props.timestamp ? new Date(props.timestamp) : null;
       const ageMs = obsTime ? (Date.now() - obsTime) : Infinity;
       if (ageMs > STALE_MS) {
@@ -1140,19 +1195,24 @@ async function fetchObservation() {
         continue;
       }
 
-      // Fetch raw METAR in parallel for accurate wind/gust data
-      const rawMetar = await fetchRawMetar(station.id);
-      const metarWind = parseMetarWind(rawMetar);
-
-      // Good observation — render it
+      // Render immediately with NWS API data — never block on METAR fetch
       activeObsStation = station;
       lastObsTime = obsTime;
-      renderObservation(props, station, metarWind);
+      renderObservation(props, station, null, null);
+      const label = station.id !== 'KFXE'
+        ? `📡 Latest Observation — ${station.id} <span style="color:var(--gold-light);font-size:10px">(fallback)</span>`
+        : `📡 Latest Observation — ${station.id}`;
+      document.getElementById('obsTitle').innerHTML = label;
       document.getElementById('obsMeta').textContent =
         `${station.id} · ${station.name} · ` +
         (obsTime ? obsTime.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:true}) : '--');
-      document.getElementById('obsTitle').innerHTML =
-        `📡 Latest Observation — ${station.id}${station.id !== 'KFXE' ? ' <span style="color:var(--gold-light);font-size:10px">(fallback)</span>' : ''}`;
+
+      // Then try METAR in background — improves wind/gust/dew if accessible
+      fetchRawMetar(station.id).then(rawMetar => {
+        if (!rawMetar) return;
+        const metarWind = parseMetarWind(rawMetar);
+        renderObservation(props, station, metarWind, rawMetar);
+      });
       return;
     } catch(e) {
       console.warn(`${station.id} failed:`, e.message);
@@ -1195,34 +1255,47 @@ function flightCategory(vis, ceil) {
   return 'VFR';
 }
 
-function renderObservation(p, station, metarWind) {
-  const tempF    = cToF(p.temperature?.value);
-  const dewF     = cToF(p.dewpoint?.value);
-  const feelsF   = cToF(p.heatIndex?.value || p.windChill?.value);
-  // METAR is authoritative for wind — use it as primary source if available
-  // API structured fields used only as fallback
+function renderObservation(p, station, metarWind, rawMetar) {
+  // Temp & dew: METAR group (e.g. 13/M04) as fallback when API returns null
+  const metarTD = parseMetarTempDew(rawMetar);
+  const tempC   = p.temperature?.value ?? metarTD.tempC;
+  const dewC    = p.dewpoint?.value    ?? metarTD.dewC;
+  const tempF   = cToF(tempC);
+  const dewF    = cToF(dewC);
+
+  // Humidity: API first, then Magnus formula from temp+dew
+  const humid = p.relativeHumidity?.value
+    ? Math.round(p.relativeHumidity.value)
+    : calcRelativeHumidity(tempC, dewC);
+
+  // Wind: METAR primary (knots correctly converted), API fallback
   let windSpd, windGust;
-  if (metarWind && metarWind.spd != null) {
+  if (metarWind?.spd != null) {
     windSpd  = metarWind.spd;
-    windGust = metarWind.gust;  // null if no G group in METAR = truly no gusts
+    windGust = metarWind.gust;
   } else {
-    // Fallback to NWS API fields (may have unit confusion)
     windSpd  = windToMph(p.windSpeed?.value,  p.windSpeed?.unitCode);
     windGust = windToMph(p.windGust?.value,   p.windGust?.unitCode);
   }
-  // Use METAR wind direction if available (more reliable than API)
-  const windDir = (metarWind?.dir != null) ? metarWind.dir : p.windDirection?.value;
+  const windDir         = metarWind?.dir != null ? metarWind.dir : p.windDirection?.value;
+  const windDirCardinal = windDir != null ? degToCardinal(windDir) : '';
+
+  // Feels-like: API first, then calculated
+  const feelsF = p.heatIndex?.value != null ? cToF(p.heatIndex.value)
+               : p.windChill?.value != null  ? cToF(p.windChill.value)
+               : calcFeelsLike(tempF, dewF, windSpd);
+
   const pressInHg = paToInHg(p.altimeterSetting?.value || p.barometricPressure?.value);
-  const visMi    = mToMi(p.visibility?.value);
-  const humid    = p.relativeHumidity?.value ? Math.round(p.relativeHumidity.value) : null;
-  const sky      = p.textDescription || 'Unknown';
-  // Ceiling from cloud layers
+  const visMi     = mToMi(p.visibility?.value);
+  const sky       = p.textDescription || 'Unknown';
   const ceilLayer = (p.cloudLayers||[]).find(l => ['BKN','OVC'].includes(l.amount));
-  const ceilFt   = ceilLayer ? Math.round(ceilLayer.base.value * 3.28084) : null;
-  const flCat    = flightCategory(p.visibility?.value, ceilLayer?.base?.value);
-  const icon     = wxIcon(sky, true);
-  const tColor   = tempF != null ? tempColor(tempF) : '#fff';
-  const windDirCardinal = p.windDirection?.value != null ? degToCardinal(p.windDirection.value) : '';
+  const ceilFt    = ceilLayer ? Math.round(ceilLayer.base.value * 3.28084) : null;
+  const flCat     = flightCategory(p.visibility?.value, ceilLayer?.base?.value);
+  const icon      = wxIcon(sky, true);
+  const tColor    = tempF != null ? tempColor(tempF) : '#fff';
+
+  // Decoded METAR remarks (SLP, T-group, pressure tendency, etc.)
+  const remarksHTML = buildRemarksHTML(rawMetar);
 
   document.getElementById('obs-grid').innerHTML = `
     <div class="obs-hero">
@@ -1230,16 +1303,14 @@ function renderObservation(p, station, metarWind) {
       <div class="obs-hero-temp" style="color:${tColor}">${tempF ?? '--'}<span>°F</span></div>
       <div class="obs-hero-desc">
         <div class="obs-hero-sky">${escHtml(sky)}</div>
-        <div class="obs-hero-feel">${feelsF != null ? `Feels like ${feelsF}°F` : `Dew ${dewF ?? '--'}°F`}</div>
+        <div class="obs-hero-feel">${feelsF != null ? `Feels like ${feelsF}°F` : dewF != null ? `Dew ${dewF}°F` : ''}</div>
       </div>
       <div class="obs-flight ${flCat}">${flCat}</div>
     </div>
 
     <div class="obs-stat">
       <div class="obs-stat-label">Wind</div>
-      <div class="obs-stat-value">
-        ${windDirCardinal} ${windDir != null ? windDirArrow(windDir) : ''} ${windSpd ?? '--'} mph
-      </div>
+      <div class="obs-stat-value">${windDirCardinal} ${windDir != null ? windDirArrow(windDir) : ''} ${windSpd ?? '--'} mph</div>
       ${windGust
         ? `<div class="obs-stat-gust">Gusts ${windGust} mph</div>`
         : `<div class="obs-stat-sub">No gusts reported</div>`}
@@ -1247,8 +1318,8 @@ function renderObservation(p, station, metarWind) {
 
     <div class="obs-stat">
       <div class="obs-stat-label">Humidity</div>
-      <div class="obs-stat-value">${humid ?? '--'}%</div>
-      <div class="obs-stat-sub">Dew ${dewF ?? '--'}°F</div>
+      <div class="obs-stat-value">${humid != null ? humid + '%' : '--%'}</div>
+      <div class="obs-stat-sub">Dew ${dewF != null ? dewF + '°F' : '--°F'}</div>
     </div>
 
     <div class="obs-stat">
@@ -1262,7 +1333,58 @@ function renderObservation(p, station, metarWind) {
       <div class="obs-stat-value">${visMi ?? '--'} mi</div>
       ${ceilFt ? `<div class="obs-stat-sub">Ceiling ${ceilFt.toLocaleString()} ft</div>` : '<div class="obs-stat-sub">Clear</div>'}
     </div>
+    ${remarksHTML}
   `;
+}
+
+// Build decoded METAR remarks panel — returns empty string if no rawMetar
+function buildRemarksHTML(metar) {
+  if (!metar) return '';
+  const rmkIdx = metar.indexOf(' RMK ');
+  if (rmkIdx === -1) return '';
+  const rmk = metar.slice(rmkIdx + 5).trim();
+  const items = [];
+
+  if (/\bAO2\b/.test(rmk)) items.push(['Station', 'Auto w/ precip discriminator']);
+  else if (/\bAO1\b/.test(rmk)) items.push(['Station', 'Auto (no precip discriminator)']);
+
+  const slp = rmk.match(/\bSLP(\d{3})\b/);
+  if (slp) {
+    const v = parseInt(slp[1]);
+    const hpa = (v >= 550 ? 900 : 1000) + v / 10;
+    items.push(['Sea Level Pres', hpa.toFixed(1) + ' hPa']);
+  }
+
+  const tgrp = rmk.match(/\bT(0|1)(\d{3})(0|1)(\d{3})\b/);
+  if (tgrp) {
+    const tC = (tgrp[1]==='1'?-1:1) * parseInt(tgrp[2]) / 10;
+    const dC = (tgrp[3]==='1'?-1:1) * parseInt(tgrp[4]) / 10;
+    items.push(['Precise Temp', cToF(tC) + '°F (' + tC.toFixed(1) + '°C)']);
+    items.push(['Precise Dew',  cToF(dC) + '°F (' + dC.toFixed(1) + '°C)']);
+  }
+
+  const ptend = rmk.match(/\b5(\d)(\d{3})\b/);
+  if (ptend) {
+    const chars = ['Inc/Dec','Increasing','Inc/Steady','Inc Steady','Unsteady Inc',
+                   'Dec/Inc','Decreasing','Dec/Steady','Dec Steady'];
+    items.push(['3hr Pres Trend', (chars[+ptend[1]]||'?') + ', ' + (parseInt(ptend[2])/10) + ' hPa']);
+  }
+
+  if (/\$/.test(rmk)) items.push(['Maint Flag', 'Station needs service']);
+
+  if (!items.length) return '';
+
+  return `
+    <div style="grid-column:1/-1;background:rgba(0,20,60,0.5);border:1px solid var(--border);
+                border-left:3px solid var(--muted);border-radius:3px;padding:5px 10px;">
+      <div style="font-family:'Oswald',sans-serif;font-size:10px;font-weight:700;letter-spacing:2px;
+                  text-transform:uppercase;color:var(--muted);margin-bottom:3px;">📋 Remarks</div>
+      <div style="display:flex;flex-wrap:wrap;gap:3px 14px;">
+        ${items.map(([l,v]) => `<span style="font-family:'Share Tech Mono',monospace;font-size:11px;">
+          <span style="color:var(--muted);font-size:10px;">${escHtml(l)}:</span> ${escHtml(v)}</span>`).join('')}
+      </div>
+      <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--muted);margin-top:2px;word-break:break-all;">${escHtml(metar)}</div>
+    </div>`;
 }
 
 function degToCardinal(deg) {
@@ -1600,7 +1722,7 @@ window.addEventListener('load', () => {
   setInterval(fetchAlerts,      REFRESH_ALERTS);
   setInterval(fetchForecast,    REFRESH_FORECAST);
   setInterval(fetchObservation, REFRESH_OBS);
-  setInterval(loadRadar,        REFRESH_RADAR);
+  // Radar self-refreshes every 2 min via its own internal timer in loadRadar()
 });
 </script>
 </body>
