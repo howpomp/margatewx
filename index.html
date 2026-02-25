@@ -6,150 +6,72 @@
 <title>City of Margate — Weather Operations Dashboard</title>
 <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Source+Sans+3:wght@300;400;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
 <style>
+/* Simplified core styles for performance */
 :root {
-  --navy:       #003087;
-  --navy-dark:  #001A4D;
-  --navy-mid:   #002060;
-  --navy-light: #0A3A7A;
-  --sky:        #0066CC;
-  --gold:       #C8973A;
-  --gold-light: #E8B84B;
-  --gold-pale:  #F5D98A;
-  --white:      #FFFFFF;
-  --off-white:  #E8EEF8;
-  --muted:      #7A9AC0;
-  --border:     #0A3A7A;
-  --panel:      rgba(0,32,96,0.85);
-  --warning:    #E01010;
-  --warning-bg: rgba(224,16,16,0.15);
-  --watch:      #D4A017;
-  --watch-bg:   rgba(212,160,23,0.15);
-  --advisory:   #2288DD;
-  --advisory-bg:rgba(34,136,221,0.15);
-  --statement:  #22AA55;
-  --statement-bg:rgba(34,170,85,0.12);
-  --special:    #FF7A00;
-  --special-bg: rgba(255,122,0,0.12);
+  --navy: #003087; --navy-dark: #001A4D; --navy-mid: #002060; --navy-light: #0A3A7A;
+  --gold: #C8973A; --gold-light: #E8B84B; --white: #FFFFFF; --off-white: #E8EEF8;
+  --muted: #7A9AC0; --border: #0A3A7A;
 }
 * { margin:0; padding:0; box-sizing:border-box; }
 html, body { width:100%; height:100%; background: var(--navy-dark); color: var(--off-white); font-family: 'Source Sans 3', sans-serif; overflow: hidden; }
-#header { height: 56px; background: linear-gradient(135deg, #001A4D 0%, #003087 50%, #002060 100%); border-bottom: 3px solid var(--gold); display: flex; align-items: center; justify-content: space-between; padding: 0 16px; position: relative; flex-shrink: 0; box-shadow: 0 2px 20px rgba(0,0,0,0.5); }
-.header-left { display: flex; align-items: center; gap: 12px; }
-.city-name-block { line-height: 1; }
-.city-name-block .city-label { font-family: 'Oswald', sans-serif; font-size: 10px; font-weight: 400; letter-spacing: 4px; text-transform: uppercase; color: var(--gold-light); opacity: .8; }
-.city-name-block .city-name { font-family: 'Oswald', sans-serif; font-size: 22px; font-weight: 700; text-transform: uppercase; letter-spacing: 2px; color: var(--white); line-height: 1; }
-.city-name-block .city-sub { font-family: 'Oswald', sans-serif; font-size: 11px; font-weight: 400; letter-spacing: 3px; text-transform: uppercase; color: var(--gold); }
-.header-center { position: absolute; left: 50%; transform: translateX(-50%); text-align: center; }
-.header-center .dash-title { font-family: 'Oswald', sans-serif; font-size: 14px; font-weight: 600; letter-spacing: 4px; text-transform: uppercase; color: var(--gold-light); }
-.header-center .zone-tag { font-family: 'Share Tech Mono', monospace; font-size: 11px; color: var(--muted); letter-spacing: 1px; }
-.header-right { display: flex; align-items: center; gap: 16px; }
-.clock-block { text-align: right; }
-.clock-time { font-family: 'Share Tech Mono', monospace; font-size: 22px; color: var(--white); letter-spacing: 2px; }
-.clock-date { font-family: 'Oswald', sans-serif; font-size: 11px; font-weight: 400; letter-spacing: 2px; text-transform: uppercase; color: var(--muted); }
-.status-pip { width: 9px; height: 9px; border-radius: 50%; background: #33DD66; box-shadow: 0 0 8px #33DD66; animation: pipPulse 2.5s infinite; }
-.status-pip.loading { background: var(--gold); box-shadow: 0 0 8px var(--gold); animation: pipPulse .8s infinite; }
-.status-pip.error { background: var(--warning); box-shadow: 0 0 8px var(--warning); animation: none; }
-@keyframes pipPulse { 0%,100%{opacity:1} 50%{opacity:.4} }
-#dashboard { display: grid; grid-template-rows: 1fr auto; height: calc(100vh - 56px); gap: 0; }
-#top-row { display: grid; grid-template-columns: 58% 42%; gap: 0; min-height: 0; overflow: hidden; }
-.panel { border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; position: relative; }
-.panel-header { background: linear-gradient(90deg, var(--navy-dark), var(--navy-mid)); border-bottom: 2px solid var(--gold); padding: 5px 12px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
-.panel-title { font-family: 'Oswald', sans-serif; font-size: 12px; font-weight: 600; letter-spacing: 3px; text-transform: uppercase; color: var(--gold-light); }
-.panel-meta { font-family: 'Share Tech Mono', monospace; font-size: 10px; color: var(--muted); }
-.panel-body { flex: 1; overflow: hidden; position: relative; }
-#radarMap { width: 100%; height: 100%; background: #020810; }
-.radar-timestamp { position: absolute; bottom: 8px; left: 8px; background: rgba(0,20,60,0.85); border: 1px solid var(--border); border-radius: 2px; padding: 3px 8px; font-family: 'Share Tech Mono', monospace; font-size: 11px; color: var(--gold-light); z-index: 1000; pointer-events: none; }
-.radar-legend { position: absolute; top: 8px; right: 8px; background: rgba(0,20,60,0.85); border: 1px solid var(--border); border-radius: 2px; padding: 6px 8px; z-index: 1000; pointer-events: none; }
-.radar-legend-title { font-family: 'Oswald', sans-serif; font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; }
-.radar-legend-bar { display: flex; height: 8px; width: 120px; border-radius: 1px; overflow: hidden; }
-.radar-legend-bar div { flex: 1; }
-.radar-legend-labels { display: flex; justify-content: space-between; font-family: 'Share Tech Mono', monospace; font-size: 8px; color: var(--muted); margin-top: 2px; }
-.margate-dot { width: 12px; height: 12px; background: var(--gold); border: 2px solid #fff; border-radius: 50%; box-shadow: 0 0 8px var(--gold); animation: margatePulse 2s infinite; }
-@keyframes margatePulse { 0%,100% { box-shadow: 0 0 6px var(--gold); } 50% { box-shadow: 0 0 14px var(--gold); } }
-#right-col { display: grid; grid-template-rows: 40% 60%; border-right: none; overflow: hidden; }
+#header { height: 56px; background: linear-gradient(135deg, #001A4D 0%, #003087 50%, #002060 100%); border-bottom: 3px solid var(--gold); display: flex; align-items: center; justify-content: space-between; padding: 0 16px; position: relative; flex-shrink: 0; }
+.city-name { font-family: 'Oswald', sans-serif; font-size: 22px; font-weight: 700; text-transform: uppercase; color: var(--white); }
+.clock-time { font-family: 'Share Tech Mono', monospace; font-size: 22px; color: var(--white); }
+#dashboard { display: grid; grid-template-rows: 1fr auto; height: calc(100vh - 56px); }
+#top-row { display: grid; grid-template-columns: 58% 42%; overflow: hidden; }
+.panel { border: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; }
+.panel-header { background: var(--navy-mid); border-bottom: 2px solid var(--gold); padding: 5px 12px; display: flex; justify-content: space-between; align-items: center; }
+.panel-title { font-family: 'Oswald', sans-serif; font-size: 12px; font-weight: 600; text-transform: uppercase; color: var(--gold-light); }
+#radarMap { width: 100%; height: 100%; background: #000; }
+#right-col { display: grid; grid-template-rows: 40% 60%; }
 #forecast-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; padding: 8px; height: 100%; }
-.forecast-card { background: rgba(0,20,60,0.6); border: 1px solid var(--border); border-radius: 3px; padding: 8px 6px; display: flex; flex-direction: column; align-items: center; gap: 4px; }
-.fc-period { font-family: 'Oswald', sans-serif; font-size: 11px; font-weight: 600; color: var(--gold-light); text-transform: uppercase; }
-.fc-temp { font-family: 'Oswald', sans-serif; font-size: 26px; font-weight: 700; color: var(--white); }
-#obs-grid { padding: 8px 10px; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; height: 100%; }
-.obs-hero { grid-column: 1/-1; display: flex; align-items: center; gap: 10px; background: rgba(0,20,60,0.5); border: 1px solid var(--border); border-left: 3px solid var(--gold); padding: 6px 10px; }
-.obs-hero-temp { font-family: 'Oswald', sans-serif; font-size: 38px; font-weight: 700; color: var(--white); }
-.obs-stat { background: rgba(0,20,60,0.5); border: 1px solid var(--border); padding: 6px 8px; display: flex; flex-direction: column; }
-.obs-stat-label { font-family: 'Oswald', sans-serif; font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; }
-.obs-stat-value { font-family: 'Share Tech Mono', monospace; font-size: 20px; color: var(--white); }
-#bottom-row { border-top: 2px solid var(--gold); max-height: 220px; min-height: 100px; display: flex; flex-direction: column; background: var(--navy-dark); }
-#alerts-scroll { flex: 1; overflow-x: auto; display: flex; gap: 6px; padding: 6px 10px; }
-.alert-tile { flex-shrink: 0; width: 280px; border-left: 4px solid; padding: 7px 10px; background: rgba(255,255,255,0.05); }
-.tile-event { font-family: 'Oswald', sans-serif; font-size: 13px; font-weight: 700; text-transform: uppercase; color: var(--white); }
-#ticker-bar { height: 28px; background: var(--navy-mid); border-top: 1px solid var(--border); display: flex; align-items: center; overflow: hidden; }
-.ticker-label { background: var(--gold); color: var(--navy-dark); font-family: 'Oswald', sans-serif; font-size: 11px; font-weight: 700; padding: 0 12px; height: 100%; display: flex; align-items: center; }
-.ticker-scroll { display: flex; white-space: nowrap; }
-.ticker-item { font-family: 'Oswald', sans-serif; font-size: 12px; padding-right: 40px; }
-@media (max-width: 768px) { #dashboard { grid-template-rows: auto auto auto; overflow: auto; } #top-row { grid-template-columns: 1fr; } }
+.forecast-card { background: rgba(0,20,60,0.6); border: 1px solid var(--border); border-radius: 3px; padding: 8px 6px; display: flex; flex-direction: column; align-items: center; }
+#obs-grid { padding: 8px 10px; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.obs-hero { grid-column: 1/-1; background: rgba(0,20,60,0.5); border-left: 3px solid var(--gold); padding: 10px; }
+.obs-hero-temp { font-family: 'Oswald', sans-serif; font-size: 38px; font-weight: 700; color: #FFF; }
+.obs-stat { background: rgba(0,20,60,0.5); border: 1px solid var(--border); padding: 8px; }
+#bottom-row { border-top: 2px solid var(--gold); min-height: 80px; background: var(--navy-dark); padding: 10px; }
+.status-pip { width: 10px; height: 10px; border-radius: 50%; background: #33DD66; margin-right: 8px; display: inline-block; }
+.status-pip.loading { background: var(--gold); }
+.margate-dot { width: 12px; height: 12px; background: var(--gold); border: 2px solid #fff; border-radius: 50%; box-shadow: 0 0 8px var(--gold); }
 </style>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
 </head>
 <body>
 <div id="header">
-  <div class="header-left">
-    <div class="city-name-block">
-      <div class="city-label">City of</div>
-      <div class="city-name">Margate</div>
-      <div class="city-sub">Broward County, Florida</div>
-    </div>
-  </div>
-  <div class="header-center">
-    <div class="dash-title">Weather Operations Dashboard</div>
-    <div class="zone-tag">NWS Zone FLZ072 · MFL Office · KFXE Obs</div>
-  </div>
+  <div class="header-left"><div class="city-name">Margate Weather Ops</div></div>
   <div class="header-right">
     <div id="statusPip" class="status-pip loading"></div>
-    <div class="clock-block">
-      <div id="clock" class="clock-time">--:--:--</div>
-      <div id="clockDate" class="clock-date">Loading...</div>
-    </div>
+    <span id="clock" class="clock-time">--:--:--</span>
   </div>
 </div>
 <div id="dashboard">
   <div id="top-row">
-    <div class="panel" id="panel-radar">
-      <div class="panel-header"><span class="panel-title">⬡ Live Radar</span><span class="panel-meta" id="radarMeta">Animating</span></div>
-      <div class="panel-body">
-        <div id="radarMap"></div>
-        <div class="radar-timestamp" id="radarTimestamp">Loading...</div>
-      </div>
+    <div class="panel">
+      <div class="panel-header"><span class="panel-title">Live Radar</span><span id="radarTimestamp" style="font-size:10px">Loading...</span></div>
+      <div id="radarMap"></div>
     </div>
     <div id="right-col">
       <div class="panel">
-        <div class="panel-header"><span class="panel-title">☀ Forecast</span><span class="panel-meta" id="fcMeta">Loading...</span></div>
-        <div class="panel-body"><div id="forecast-grid"></div></div>
+        <div class="panel-header"><span class="panel-title">Forecast</span></div>
+        <div id="forecast-grid"></div>
       </div>
       <div class="panel">
-        <div class="panel-header"><span class="panel-title" id="obsTitle">📡 Latest Observation</span><span class="panel-meta" id="obsMeta">KFXE</span></div>
-        <div class="panel-body"><div id="obs-grid"></div></div>
+        <div class="panel-header"><span class="panel-title" id="obsTitle">Latest Observation</span></div>
+        <div id="obs-grid"></div>
       </div>
     </div>
   </div>
-  <div id="bottom-row">
-    <div id="alerts-scroll"></div>
-  </div>
-  <div id="ticker-bar">
-    <div class="ticker-label">MRG WX</div>
-    <div style="overflow:hidden;flex:1;"><div class="ticker-scroll" id="ticker"></div></div>
-  </div>
+  <div id="bottom-row"><div id="alerts-scroll">No Active Alerts</div></div>
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script>
 const MARGATE_LAT=26.2459, MARGATE_LNG=-80.2067;
 const NWS_HEADERS={'User-Agent':'MargateWxDash/1.0','Accept':'application/geo+json'};
+const STATIONS = ['KFXE', 'KPMP', 'KFLL']; // Ordered as requested
 let map, radarLayer, radarAnim, radarIdx=0;
-const radarFrames=[{a:10,l:'-10m'},{a:5,l:'-5m'},{a:0,l:'Now'}];
 
-function updateClock(){
-  const n=new Date();
-  document.getElementById('clock').textContent=n.toLocaleTimeString('en-US',{hour12:false});
-  document.getElementById('clockDate').textContent=n.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric',year:'numeric'});
-}
+function updateClock(){ document.getElementById('clock').textContent=new Date().toLocaleTimeString('en-US',{hour12:false}); }
 setInterval(updateClock,1000);
 
 function initMap(){
@@ -160,61 +82,58 @@ function initMap(){
 }
 
 function loadRadar(){
-  if(radarAnim)clearInterval(radarAnim);
+  const frames=[{a:10,l:'-10m'},{a:5,l:'-5m'},{a:0,l:'Now'}];
+  if(radarAnim) clearInterval(radarAnim);
   radarAnim=setInterval(()=>{
-    radarIdx=(radarIdx+1)%radarFrames.length;
-    const f=radarFrames[radarIdx];
-    if(radarLayer)map.removeLayer(radarLayer);
-    const ts=Math.floor((Date.now()-f.a*60000)/300000);
-    radarLayer=L.tileLayer(`https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/nexrad-n0q-900913/{z}/{x}/{y}.png?ts=${ts}`,{opacity:0.7}).addTo(map);
-    document.getElementById('radarTimestamp').textContent=`Frame: ${f.l}`;
-  },1000);
+    radarIdx=(radarIdx+1)%frames.length;
+    if(radarLayer) map.removeLayer(radarLayer);
+    const ts=Math.floor((Date.now()-frames[radarIdx].a*60000)/300000);
+    radarLayer=L.tileLayer(`https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/nexrad-n0q-900913/{z}/{x}/{y}.png?ts=${ts}`,{opacity:0.75}).addTo(map);
+    document.getElementById('radarTimestamp').textContent=frames[radarIdx].l;
+  },1200);
 }
 
 async function fetchForecast(){
   try{
-    const res=await fetch(`https://api.weather.gov/gridpoints/MFL/110,37/forecast`,{headers:NWS_HEADERS});
-    const data=await res.json();
-    const periods=data.properties.periods.slice(0,3);
-    document.getElementById('forecast-grid').innerHTML=periods.map(p=>`
-      <div class="forecast-card">
-        <div class="fc-period">${p.name}</div>
-        <div class="fc-temp">${p.temperature}°${p.temperatureUnit}</div>
-        <div style="font-size:10px;text-align:center">${p.shortForecast}</div>
-      </div>`).join('');
-    document.getElementById('fcMeta').textContent='Updated: '+new Date().toLocaleTimeString();
-  }catch(e){console.error(e)}
+    const res=await fetch('https://api.weather.gov/gridpoints/MFL/110,37/forecast',{headers:NWS_HEADERS});
+    const d=await res.json();
+    const p=d.properties.periods.slice(0,3);
+    document.getElementById('forecast-grid').innerHTML=p.map(x=>`
+      <div class="forecast-card"><div style="font-size:10px">${x.name}</div><div style="font-size:18px;font-weight:700">${x.temperature}°${x.temperatureUnit}</div><div style="font-size:9px;text-align:center">${x.shortForecast}</div></div>`).join('');
+  } catch(e){ document.getElementById('forecast-grid').innerHTML='Forecast Error'; }
 }
 
 async function fetchObs(){
-  try{
-    const res=await fetch(`https://api.weather.gov/stations/KFXE/observations/latest`,{headers:NWS_HEADERS});
-    const d=await res.json();
-    const p=d.properties;
-    document.getElementById('obs-grid').innerHTML=`
-      <div class="obs-hero">
-        <div class="obs-hero-temp">${Math.round(p.temperature.value*9/5+32)}°F</div>
-        <div style="font-size:14px">${p.textDescription}</div>
-      </div>
-      <div class="obs-stat"><span class="obs-stat-label">Wind</span><span class="obs-stat-value">${Math.round(p.windSpeed.value*0.62)} mph</span></div>
-      <div class="obs-stat"><span class="obs-stat-label">Humidity</span><span class="obs-stat-value">${Math.round(p.relativeHumidity.value)}%</span></div>`;
-  }catch(e){console.error(e)}
+  for(let id of STATIONS){
+    try{
+      const res=await fetch(`https://api.weather.gov/stations/${id}/observations/latest`,{headers:NWS_HEADERS});
+      if(!res.ok) continue;
+      const d=await res.json();
+      const p=d.properties;
+      const temp = p.temperature.value ? Math.round(p.temperature.value*9/5+32) : '--';
+      const humid = p.relativeHumidity.value ? Math.round(p.relativeHumidity.value) : 'N/A';
+      const wind = p.windSpeed.value ? Math.round(p.windSpeed.value*0.62) : 0;
+      
+      document.getElementById('obs-grid').innerHTML=`
+        <div class="obs-hero"><div class="obs-hero-temp">${temp}°F</div><div style="font-size:14px">${p.textDescription}</div></div>
+        <div class="obs-stat"><div style="font-size:10px">WIND</div><div style="font-size:18px">${wind} MPH</div></div>
+        <div class="obs-stat"><div style="font-size:10px">HUMIDITY</div><div style="font-size:18px">${humid}%</div></div>`;
+      document.getElementById('obsTitle').textContent=`Obs — ${id}`;
+      return; 
+    } catch(e) { console.warn(`Station ${id} failed`); }
+  }
 }
 
 async function fetchAlerts(){
   try{
-    const res=await fetch(`https://api.weather.gov/alerts/active?zone=FLZ072`,{headers:NWS_HEADERS});
-    const data=await res.json();
-    const alerts=data.features.map(f=>f.properties);
-    const scroll=document.getElementById('alerts-scroll');
-    if(!alerts.length) { scroll.innerHTML='<div style="padding:20px">No Active Alerts</div>'; return; }
-    scroll.innerHTML=alerts.map(a=>`<div class="alert-tile" style="border-color:#C8973A"><div class="tile-event">${a.event}</div><div style="font-size:10px">${a.areaDesc.split(';')[0]}</div></div>`).join('');
-    document.getElementById('ticker').innerHTML=alerts.map(a=>`<div class="ticker-item">⚠ ${a.event}: ${a.headline}</div>`).join('');
+    const res=await fetch('https://api.weather.gov/alerts/active?zone=FLZ072',{headers:NWS_HEADERS});
+    const d=await res.json();
     document.getElementById('statusPip').className='status-pip';
-  }catch(e){ document.getElementById('statusPip').className='status-pip error'; }
+    if(d.features.length) document.getElementById('alerts-scroll').textContent = d.features[0].properties.headline;
+  } catch(e){ document.getElementById('statusPip').className='status-pip loading'; }
 }
 
-window.onload=()=>{ initMap(); fetchForecast(); fetchObs(); fetchAlerts(); setInterval(fetchAlerts,90000); setInterval(fetchObs,300000); };
+window.onload=()=>{ initMap(); fetchForecast(); fetchObs(); fetchAlerts(); setInterval(fetchObs,300000); setInterval(fetchAlerts,120000); };
 </script>
 </body>
 </html>
