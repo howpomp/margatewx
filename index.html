@@ -910,97 +910,106 @@ function initMap() {
   loadRadar();
 }
 
-// IEM Mesonet (Iowa State Univ.) radar tiles — US-hosted, no geo-blocking
-const IEM_RADAR_PRODUCTS = [
-  { label: '-10m', age: 10 },
-  { label: '-8m',  age: 8  },
-  { label: '-6m',  age: 6  },
-  { label: '-4m',  age: 4  },
-  { label: '-2m',  age: 2  },
-  { label: 'Now',  age: 0  },
-];
-
-// Pre-built tile layers — all created upfront and kept in memory
-// This eliminates the black-flash strobe by keeping old layer visible
-// until the new one fires its 'load' event (all tiles painted)
-let radarLayers = [];  // array of L.tileLayer, one per frame
-
-function iemRadarUrl(minutesAgo) {
-  const ts = Math.floor((Date.now() - minutesAgo * 60000) / 300000);
-  return 'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/nexrad-n0q-900913/{z}/{x}/{y}.png?ts=' + ts;
-}
+// IEM Mesonet radar — fetches real archive timestamps so each frame is genuinely different
+let radarLayers = [];
 
 async function loadRadar() {
   try {
-    // Clear existing animation and layers
     if (radarAnim) { clearInterval(radarAnim); radarAnim = null; }
     radarLayers.forEach(l => { try { map.removeLayer(l); } catch(e) {} });
     radarLayers = [];
-    radarFrames = IEM_RADAR_PRODUCTS.slice();
+    radarFrames = [];
 
-    // Pre-build ALL tile layers and add them to the map as invisible
-    // Leaflet will fetch tiles in the background immediately
-    radarFrames.forEach((frame, i) => {
-      const layer = L.tileLayer(
-        iemRadarUrl(frame.age),
-        { opacity: 0, zIndex: 20, maxZoom: 14, attribution: '© Iowa State Univ. Mesonet' }
-      );
-      layer.addTo(map);
-      radarLayers.push(layer);
+    // Fetch available scan times from IEM archive API
+    const metaRes = await fetchWithTimeout(
+      'https://mesonet.agron.iastate.edu/api/1/radarproducts.json?station=KAMX&product=N0Q',
+      {}, 8000
+    );
+    if (!metaRes.ok) throw new Error('IEM API ' + metaRes.status);
+    const meta = await metaRes.json();
+
+    // Last 6 scans (~30 min of history)
+    const scans = (meta.data || []).slice(-6);
+    if (!scans.length) throw new Error('No scans');
+
+    radarFrames = scans.map(s => {
+      const raw = s.utc_valid || s.valid || s;
+      const dt = new Date(raw);
+      // Build IEM ridge tile URL: ridge::KAMX:N0Q:YYYYMMDDHHMMSS
+      const pad = n => String(n).padStart(2,'0');
+      const key = dt.getUTCFullYear()
+        + pad(dt.getUTCMonth()+1)
+        + pad(dt.getUTCDate())
+        + pad(dt.getUTCHours())
+        + pad(dt.getUTCMinutes()) + '00';
+      return {
+        dt,
+        url: 'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/ridge::KAMX:N0Q:' + key + '/{z}/{x}/{y}.png',
+        label: dt.toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit', hour12:true}),
+      };
     });
 
-    // Wait briefly for initial tiles to start loading, then begin animation
-    // showing frame 0 first
-    radarIdx = 0;
-    showRadarFrame(0);
-
-    radarAnim = setInterval(() => {
-      radarIdx = (radarIdx + 1) % radarFrames.length;
-      showRadarFrame(radarIdx);
-    }, 800);
-
-    document.getElementById('radarMeta').textContent =
-      'Base Reflectivity · ' + radarFrames.length + ' frames · Auto-animating';
+    buildRadarLayers();
 
   } catch(e) {
-    document.getElementById('radarTimestamp').textContent = 'Radar unavailable';
-    console.error('Radar load error:', e);
+    console.warn('IEM archive failed, using mosaic fallback:', e.message);
+    loadRadarFallback();
   }
+}
+
+// Fallback: current mosaic with genuinely different ts values per frame
+function loadRadarFallback() {
+  if (radarAnim) { clearInterval(radarAnim); radarAnim = null; }
+  radarLayers.forEach(l => { try { map.removeLayer(l); } catch(e) {} });
+  radarLayers = [];
+
+  const now = Date.now();
+  // Use 5-min intervals — each gets a distinct ts bucket
+  radarFrames = [5,4,3,2,1,0].map(i => {
+    const t = now - i * 5 * 60000;
+    const ts = Math.floor(t / 300000); // unique 5-min bucket
+    const dt = new Date(t);
+    return {
+      dt,
+      url: 'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/nexrad-n0q-900913/{z}/{x}/{y}.png?ts=' + ts,
+      label: dt.toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit', hour12:true}),
+    };
+  });
+
+  buildRadarLayers();
+}
+
+function buildRadarLayers() {
+  // Pre-add all layers at opacity 0 so tiles load in background (no strobe)
+  radarFrames.forEach(frame => {
+    const layer = L.tileLayer(frame.url, {
+      opacity: 0, zIndex: 20, maxZoom: 14,
+      attribution: '© Iowa State Univ. Mesonet',
+      errorTileUrl: '',
+    });
+    layer.addTo(map);
+    radarLayers.push(layer);
+  });
+
+  radarIdx = 0;
+  showRadarFrame(0);
+  if (radarAnim) clearInterval(radarAnim);
+  radarAnim = setInterval(() => {
+    radarIdx = (radarIdx + 1) % radarFrames.length;
+    showRadarFrame(radarIdx);
+  }, 800);
+
+  document.getElementById('radarMeta').textContent =
+    'Base Reflectivity · ' + radarFrames.length + ' frames · Auto-animating';
 }
 
 function showRadarFrame(idx) {
+  if (!radarFrames[idx] || !radarLayers[idx]) return;
+  radarLayers.forEach((layer, i) => layer.setOpacity(i === idx ? 0.75 : 0));
   const frame = radarFrames[idx];
-  if (!frame || !radarLayers[idx]) return;
-
-  // Fade out all other layers, fade in this one
-  // The old layer stays visible at full opacity until new one is ready
-  radarLayers.forEach((layer, i) => {
-    if (i !== idx) {
-      layer.setOpacity(0);
-    }
-  });
-
-  const targetLayer = radarLayers[idx];
-
-  // If tiles are already loaded, switch immediately (no flash)
-  // Otherwise wait for load event before hiding the previous frame
-  if (targetLayer._tilesToLoad === 0 || targetLayer._loading === false) {
-    targetLayer.setOpacity(0.75);
-  } else {
-    // Tiles still loading — show at lower opacity immediately,
-    // then bump to full once loaded (smooth crossfade feel)
-    targetLayer.setOpacity(0.4);
-    targetLayer.once('load', () => {
-      targetLayer.setOpacity(0.75);
-    });
-  }
-
-  const frameNum = idx + 1;
-  const label = frame.label === 'Now' ? 'Latest' : frame.label;
   document.getElementById('radarTimestamp').textContent =
-    'Frame ' + frameNum + '/' + radarFrames.length + ' · ' + label;
+    'Frame ' + (idx+1) + '/' + radarFrames.length + ' · ' + frame.label;
 }
-
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  WEATHER CONDITIONS → ICON + COLOR
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
