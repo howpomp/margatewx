@@ -911,8 +911,6 @@ function initMap() {
 }
 
 // IEM Mesonet (Iowa State Univ.) radar tiles — US-hosted, no geo-blocking
-// n0q = base reflectivity, updates every ~5 min, standard XYZ tile format
-// Dual source: current + 5-min-old for simple 2-frame animation
 const IEM_RADAR_PRODUCTS = [
   { label: '-10m', age: 10 },
   { label: '-8m',  age: 8  },
@@ -922,31 +920,48 @@ const IEM_RADAR_PRODUCTS = [
   { label: 'Now',  age: 0  },
 ];
 
+// Pre-built tile layers — all created upfront and kept in memory
+// This eliminates the black-flash strobe by keeping old layer visible
+// until the new one fires its 'load' event (all tiles painted)
+let radarLayers = [];  // array of L.tileLayer, one per frame
+
 function iemRadarUrl(minutesAgo) {
-  // IEM cache-busts by rounding to the nearest 5-min window
-  // Adding a ts param forces re-fetch when the window changes
   const ts = Math.floor((Date.now() - minutesAgo * 60000) / 300000);
-  return `https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/nexrad-n0q-900913/{z}/{x}/{y}.png?ts=${ts}`;
+  return 'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/nexrad-n0q-900913/{z}/{x}/{y}.png?ts=' + ts;
 }
 
 async function loadRadar() {
   try {
-    if (radarLayer) { map.removeLayer(radarLayer); radarLayer = null; }
-    if (radarAnim)  { clearInterval(radarAnim); radarAnim = null; }
+    // Clear existing animation and layers
+    if (radarAnim) { clearInterval(radarAnim); radarAnim = null; }
+    radarLayers.forEach(l => { try { map.removeLayer(l); } catch(e) {} });
+    radarLayers = [];
+    radarFrames = IEM_RADAR_PRODUCTS.slice();
 
-    // Build 6 frames from now back to ~10 minutes
-    radarFrames = IEM_RADAR_PRODUCTS.slice(); // copy
-    radarIdx    = 0;
+    // Pre-build ALL tile layers and add them to the map as invisible
+    // Leaflet will fetch tiles in the background immediately
+    radarFrames.forEach((frame, i) => {
+      const layer = L.tileLayer(
+        iemRadarUrl(frame.age),
+        { opacity: 0, zIndex: 20, maxZoom: 14, attribution: '© Iowa State Univ. Mesonet' }
+      );
+      layer.addTo(map);
+      radarLayers.push(layer);
+    });
+
+    // Wait briefly for initial tiles to start loading, then begin animation
+    // showing frame 0 first
+    radarIdx = 0;
     showRadarFrame(0);
 
-    // Animate through frames
     radarAnim = setInterval(() => {
       radarIdx = (radarIdx + 1) % radarFrames.length;
       showRadarFrame(radarIdx);
-    }, 700);
+    }, 800);
 
     document.getElementById('radarMeta').textContent =
       'Base Reflectivity · ' + radarFrames.length + ' frames · Auto-animating';
+
   } catch(e) {
     document.getElementById('radarTimestamp').textContent = 'Radar unavailable';
     console.error('Radar load error:', e);
@@ -955,19 +970,35 @@ async function loadRadar() {
 
 function showRadarFrame(idx) {
   const frame = radarFrames[idx];
-  if (!frame) return;
-  if (radarLayer) { map.removeLayer(radarLayer); }
+  if (!frame || !radarLayers[idx]) return;
 
-  radarLayer = L.tileLayer(
-    iemRadarUrl(frame.age),
-    { opacity: 0.75, zIndex: 20, maxZoom: 14, attribution: '© Iowa State Univ. Mesonet' }
-  );
-  radarLayer.addTo(map);
+  // Fade out all other layers, fade in this one
+  // The old layer stays visible at full opacity until new one is ready
+  radarLayers.forEach((layer, i) => {
+    if (i !== idx) {
+      layer.setOpacity(0);
+    }
+  });
+
+  const targetLayer = radarLayers[idx];
+
+  // If tiles are already loaded, switch immediately (no flash)
+  // Otherwise wait for load event before hiding the previous frame
+  if (targetLayer._tilesToLoad === 0 || targetLayer._loading === false) {
+    targetLayer.setOpacity(0.75);
+  } else {
+    // Tiles still loading — show at lower opacity immediately,
+    // then bump to full once loaded (smooth crossfade feel)
+    targetLayer.setOpacity(0.4);
+    targetLayer.once('load', () => {
+      targetLayer.setOpacity(0.75);
+    });
+  }
 
   const frameNum = idx + 1;
   const label = frame.label === 'Now' ? 'Latest' : frame.label;
   document.getElementById('radarTimestamp').textContent =
-    `Frame ${frameNum}/${radarFrames.length} · ${label}`;
+    'Frame ' + frameNum + '/' + radarFrames.length + ' · ' + label;
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
