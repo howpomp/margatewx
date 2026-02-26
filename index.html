@@ -1304,7 +1304,7 @@ function renderObservation(p, station, metarWind, rawMetar) {
       ${ceilFt ? `<div class="obs-stat-sub">Ceiling ${ceilFt.toLocaleString()} ft</div>` : '<div class="obs-stat-sub">Clear</div>'}
     </div>
     ${remarksHTML}
-  \`;
+  `;
 }
 
 // Decoded METAR remarks — empty string if no rawMetar or no RMK section
@@ -1328,8 +1328,8 @@ function buildRemarksHTML(metar) {
   if (tg) {
     const tC = (tg[1]==='1'?-1:1)*parseInt(tg[2])/10;
     const dC = (tg[3]==='1'?-1:1)*parseInt(tg[4])/10;
-    items.push(['Precise Temp', cToF(tC)+'°F ('+tC.toFixed(1)+'°C)']);
-    items.push(['Precise Dew',  cToF(dC)+'°F ('+dC.toFixed(1)+'°C)']);
+    items.push(['Precise Temp', cToF(tC)+'\u00b0F ('+tC.toFixed(1)+'\u00b0C)']);
+    items.push(['Precise Dew',  cToF(dC)+'\u00b0F ('+dC.toFixed(1)+'\u00b0C)']);
   }
 
   const pt = rmk.match(/\b5(\d)(\d{3})\b/);
@@ -1342,17 +1342,22 @@ function buildRemarksHTML(metar) {
   if (/\$/.test(rmk)) items.push(['Maint', 'Station needs service']);
 
   if (!items.length) return '';
-  return \`
-    <div style="grid-column:1/-1;background:rgba(0,20,60,0.5);border:1px solid var(--border);
-      border-left:3px solid var(--muted);border-radius:3px;padding:5px 10px;">
-      <div style="font-family:'Oswald',sans-serif;font-size:10px;font-weight:700;letter-spacing:2px;
-        text-transform:uppercase;color:var(--muted);margin-bottom:3px;">📋 Remarks</div>
-      <div style="display:flex;flex-wrap:wrap;gap:3px 14px;">
-        \${items.map(([l,v])=>\`<span style="font-family:'Share Tech Mono',monospace;font-size:11px;">
-          <span style="color:var(--muted);font-size:10px;">\${escHtml(l)}:</span> \${escHtml(v)}</span>\`).join('')}
-      </div>
-      <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--muted);margin-top:2px;word-break:break-all;">\${escHtml(metar)}</div>
-    </div>\`;
+
+  // Build HTML using string concatenation to avoid template literal escaping issues
+  var rows = items.map(function(item) {
+    return '<span style="font-family:Share Tech Mono,monospace;font-size:11px;">'
+         + '<span style="color:var(--muted);font-size:10px;">' + escHtml(item[0]) + ':</span> '
+         + escHtml(item[1]) + '</span>';
+  }).join('');
+
+  return '<div style="grid-column:1/-1;background:rgba(0,20,60,0.5);border:1px solid var(--border);'
+       + 'border-left:3px solid var(--muted);border-radius:3px;padding:5px 10px;">'
+       + '<div style="font-family:Oswald,sans-serif;font-size:10px;font-weight:700;letter-spacing:2px;'
+       + 'text-transform:uppercase;color:var(--muted);margin-bottom:3px;">&#128203; Remarks</div>'
+       + '<div style="display:flex;flex-wrap:wrap;gap:3px 14px;">' + rows + '</div>'
+       + '<div style="font-family:Share Tech Mono,monospace;font-size:9px;color:var(--muted);'
+       + 'margin-top:2px;word-break:break-all;">' + escHtml(metar) + '</div>'
+       + '</div>';
 }
 
 function degToCardinal(deg) {
