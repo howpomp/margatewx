@@ -69,12 +69,6 @@ html, body {
   box-shadow: 0 2px 20px rgba(0,0,0,0.5);
 }
 
-/* City Seal SVG */
-.city-seal {
-  width: 42px;
-  height: 42px;
-  flex-shrink: 0;
-}
 
 .header-left {
   display: flex;
@@ -385,7 +379,7 @@ html, body {
   padding: 8px 10px;
   display: grid;
   grid-template-columns: 1fr 1fr;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto 1fr auto;
   gap: 6px;
   height: 100%;
   overflow: hidden;
@@ -699,45 +693,6 @@ html, body {
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
 <div id="header">
   <div class="header-left">
-    <!-- City of Margate Seal (stylized SVG representation) -->
-    <svg class="city-seal" viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg">
-      <!-- Outer ring -->
-      <circle cx="40" cy="40" r="38" fill="#001A4D" stroke="#C8973A" stroke-width="2.5"/>
-      <circle cx="40" cy="40" r="33" fill="none" stroke="#C8973A" stroke-width="1" stroke-dasharray="3,3"/>
-      <!-- Shield body -->
-      <path d="M40 12 L62 22 L62 46 Q62 62 40 70 Q18 62 18 46 L18 22 Z"
-            fill="#002060" stroke="#C8973A" stroke-width="1.5"/>
-      <!-- Shield top bar (blue/gold split) -->
-      <path d="M40 12 L62 22 L62 32 L18 32 L18 22 Z" fill="#003087" stroke="none"/>
-      <!-- Sun/rays on shield -->
-      <circle cx="40" cy="26" r="6" fill="#E8B84B"/>
-      <line x1="40" y1="16" x2="40" y2="20" stroke="#E8B84B" stroke-width="1.5"/>
-      <line x1="40" y1="32" x2="40" y2="36" stroke="#E8B84B" stroke-width="1.5"/>
-      <line x1="30" y1="26" x2="34" y2="26" stroke="#E8B84B" stroke-width="1.5"/>
-      <line x1="46" y1="26" x2="50" y2="26" stroke="#E8B84B" stroke-width="1.5"/>
-      <line x1="33" y1="19" x2="36" y2="22" stroke="#E8B84B" stroke-width="1.5"/>
-      <line x1="47" y1="19" x2="44" y2="22" stroke="#E8B84B" stroke-width="1.5"/>
-      <!-- Water waves on shield bottom -->
-      <path d="M22 50 Q28 46 34 50 Q40 54 46 50 Q52 46 58 50" fill="none" stroke="#0066CC" stroke-width="2"/>
-      <path d="M22 57 Q28 53 34 57 Q40 61 46 57 Q52 53 58 57" fill="none" stroke="#0066CC" stroke-width="2"/>
-      <!-- Palm tree simplified -->
-      <line x1="40" y1="38" x2="40" y2="48" stroke="#8B6914" stroke-width="2"/>
-      <path d="M40 38 Q36 34 33 36" fill="none" stroke="#228B22" stroke-width="1.5"/>
-      <path d="M40 38 Q44 34 47 36" fill="none" stroke="#228B22" stroke-width="1.5"/>
-      <path d="M40 39 Q37 36 35 38" fill="none" stroke="#228B22" stroke-width="1.5"/>
-      <path d="M40 39 Q43 36 45 38" fill="none" stroke="#228B22" stroke-width="1.5"/>
-      <!-- MARGATE text arc -->
-      <path id="arcTop" d="M 14 40 A 26 26 0 0 1 66 40" fill="none"/>
-      <text font-family="Oswald,sans-serif" font-size="7" font-weight="700" fill="#E8B84B" letter-spacing="2">
-        <textPath href="#arcTop" startOffset="8%">CITY OF MARGATE</textPath>
-      </text>
-      <!-- FLORIDA text arc bottom -->
-      <path id="arcBot" d="M 16 42 A 24 24 0 0 0 64 42" fill="none"/>
-      <text font-family="Oswald,sans-serif" font-size="6" font-weight="400" fill="#7A9AC0" letter-spacing="2">
-        <textPath href="#arcBot" startOffset="12%">· FLORIDA ·</textPath>
-      </text>
-    </svg>
-
     <div class="city-name-block">
       <div class="city-label">City of</div>
       <div class="city-name">Margate</div>
@@ -887,6 +842,20 @@ let radarLayer   = null;
 let radarAnim    = null;
 let map          = null;
 
+// Fetch wrapper with hard timeout — prevents any hung request from stalling the page
+async function fetchWithTimeout(url, options = {}, timeoutMs = 10000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...options, signal: controller.signal });
+    clearTimeout(timer);
+    return res;
+  } catch(e) {
+    clearTimeout(timer);
+    throw e; // Re-throw so callers can handle (AbortError = timeout)
+  }
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  CLOCK
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -941,22 +910,40 @@ function initMap() {
   loadRadar();
 }
 
+// IEM Mesonet (Iowa State Univ.) radar tiles — US-hosted, no geo-blocking
+// n0q = base reflectivity, updates every ~5 min, standard XYZ tile format
+// Dual source: current + 5-min-old for simple 2-frame animation
+const IEM_RADAR_PRODUCTS = [
+  { label: '-10m', age: 10 },
+  { label: '-8m',  age: 8  },
+  { label: '-6m',  age: 6  },
+  { label: '-4m',  age: 4  },
+  { label: '-2m',  age: 2  },
+  { label: 'Now',  age: 0  },
+];
+
+function iemRadarUrl(minutesAgo) {
+  // IEM cache-busts by rounding to the nearest 5-min window
+  // Adding a ts param forces re-fetch when the window changes
+  const ts = Math.floor((Date.now() - minutesAgo * 60000) / 300000);
+  return `https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/nexrad-n0q-900913/{z}/{x}/{y}.png?ts=${ts}`;
+}
+
 async function loadRadar() {
   try {
-    const res  = await fetch('https://api.rainviewer.com/public/weather-maps.json');
-    const data = await res.json();
-    radarFrames = data.radar.past.slice(-10); // last 10 frames (~50 min)
-
     if (radarLayer) { map.removeLayer(radarLayer); radarLayer = null; }
-    if (radarAnim)  clearInterval(radarAnim);
+    if (radarAnim)  { clearInterval(radarAnim); radarAnim = null; }
 
-    radarIdx = 0;
-    showRadarFrame(radarIdx);
+    // Build 6 frames from now back to ~10 minutes
+    radarFrames = IEM_RADAR_PRODUCTS.slice(); // copy
+    radarIdx    = 0;
+    showRadarFrame(0);
 
+    // Animate through frames
     radarAnim = setInterval(() => {
       radarIdx = (radarIdx + 1) % radarFrames.length;
       showRadarFrame(radarIdx);
-    }, 600);
+    }, 700);
 
     document.getElementById('radarMeta').textContent =
       'Base Reflectivity · ' + radarFrames.length + ' frames · Auto-animating';
@@ -969,21 +956,18 @@ async function loadRadar() {
 function showRadarFrame(idx) {
   const frame = radarFrames[idx];
   if (!frame) return;
-
   if (radarLayer) { map.removeLayer(radarLayer); }
 
   radarLayer = L.tileLayer(
-    `https://tilecache.rainviewer.com${frame.path}/256/{z}/{x}/{y}/2/1_1.png`,
-    { opacity: 0.72, zIndex: 20, maxZoom: 14, attribution: '© RainViewer' }
+    iemRadarUrl(frame.age),
+    { opacity: 0.75, zIndex: 20, maxZoom: 14, attribution: '© Iowa State Univ. Mesonet' }
   );
   radarLayer.addTo(map);
 
-  // Timestamp
-  const d = new Date(frame.time * 1000);
-  const ts = d.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:true});
   const frameNum = idx + 1;
+  const label = frame.label === 'Now' ? 'Latest' : frame.label;
   document.getElementById('radarTimestamp').textContent =
-    `Frame ${frameNum}/${radarFrames.length} · ${ts}`;
+    `Frame ${frameNum}/${radarFrames.length} · ${label}`;
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1022,24 +1006,31 @@ function tempColor(tempF) {
 //  FETCH FORECAST
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 async function fetchForecast() {
+  // Hardcoded fallback URL — works even if /points/ API call fails or times out
+  // MFL grid 110,37 = Margate FL (verified)
+  const FALLBACK_URL = 'https://api.weather.gov/gridpoints/MFL/110,37/forecast';
   try {
-    // Step 1: get the correct gridpoint URL for Margate's exact lat/lon
-    // This avoids hardcoded grid coords that may be slightly off
-    let forecastUrl = NWS_FORECAST; // use cached gridpoint URL
+    // Try to resolve exact gridpoint URL (10s timeout)
     if (!window._forecastUrl) {
-      const pointRes = await fetch(
-        `https://api.weather.gov/points/${MARGATE_LAT},${MARGATE_LNG}`,
-        { headers: NWS_HEADERS }
-      );
-      const pointData = await pointRes.json();
-      forecastUrl = pointData.properties.forecast;
-      window._forecastUrl = forecastUrl; // cache it
-    } else {
-      forecastUrl = window._forecastUrl;
+      try {
+        const pointRes = await fetchWithTimeout(
+          `https://api.weather.gov/points/${MARGATE_LAT},${MARGATE_LNG}`,
+          { headers: NWS_HEADERS }, 10000
+        );
+        if (pointRes.ok) {
+          const pointData = await pointRes.json();
+          window._forecastUrl = pointData.properties?.forecast || FALLBACK_URL;
+        } else {
+          window._forecastUrl = FALLBACK_URL;
+        }
+      } catch(e) {
+        // /points/ timed out or failed — use hardcoded fallback immediately
+        console.warn('Points API failed, using hardcoded grid:', e.message);
+        window._forecastUrl = FALLBACK_URL;
+      }
     }
 
-    // Step 2: fetch the actual forecast
-    const res  = await fetch(forecastUrl, { headers: NWS_HEADERS });
+    const res = await fetchWithTimeout(window._forecastUrl, { headers: NWS_HEADERS }, 10000);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     const periods = (data.properties && data.properties.periods) || [];
@@ -1050,6 +1041,7 @@ async function fetchForecast() {
   } catch(e) {
     document.getElementById('forecast-grid').innerHTML =
       '<div class="fc-loading">Forecast unavailable — ' + e.message + '</div>';
+    document.getElementById('fcMeta').textContent = 'Error';
     console.error('Forecast error:', e);
   }
 }
@@ -1091,20 +1083,57 @@ function renderForecast(periods) {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  FETCH OBSERVATION
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// Fetch raw METAR text from aviationweather.gov — authoritative source for gusts
+// Fetch raw METAR — hard 4s timeout, never blocks page on network restrictions
 async function fetchRawMetar(stationId) {
   try {
-    const url = `https://aviationweather.gov/api/data/metar?ids=${stationId}&format=raw&hours=2`;
-    const res = await fetch(url);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 4000);
+    const res = await fetch(
+      `https://aviationweather.gov/api/data/metar?ids=${stationId}&format=raw&hours=2`,
+      { signal: controller.signal }
+    );
+    clearTimeout(timer);
     if (!res.ok) return null;
     const text = await res.text();
-    // Response is plain text, one METAR per line — take the first (most recent)
     const lines = text.trim().split('\n').filter(l => l.trim().length > 0);
     return lines[0] || null;
   } catch(e) {
-    console.warn('METAR fetch failed for', stationId, e.message);
-    return null;
+    return null; // Timeout, CORS block, or network error — silent fallback
   }
+}
+
+// Parse temp/dew from METAR body group: 13/M04  22/18  M02/M05
+function parseMetarTempDew(metar) {
+  if (!metar) return { tempC: null, dewC: null };
+  const m = metar.match(/\b(M?\d{2})\/(M?\d{2})\b/);
+  if (!m) return { tempC: null, dewC: null };
+  const pv = s => s.startsWith('M') ? -parseInt(s.slice(1)) : parseInt(s);
+  return { tempC: pv(m[1]), dewC: pv(m[2]) };
+}
+
+// Magnus formula: RH% from temp + dew (°C)
+function calcRelativeHumidity(tempC, dewC) {
+  if (tempC == null || dewC == null) return null;
+  const rh = 100 * Math.exp((17.625 * dewC) / (243.04 + dewC))
+                 / Math.exp((17.625 * tempC) / (243.04 + tempC));
+  return Math.round(Math.min(100, Math.max(0, rh)));
+}
+
+// NWS wind chill / heat index
+function calcFeelsLike(tempF, dewF, windMph) {
+  if (tempF == null) return null;
+  if (tempF <= 50 && windMph != null && windMph >= 3) {
+    return Math.round(35.74 + 0.6215*tempF - 35.75*Math.pow(windMph,0.16)
+                    + 0.4275*tempF*Math.pow(windMph,0.16));
+  }
+  if (tempF >= 80 && dewF != null) {
+    const R = calcRelativeHumidity((tempF-32)*5/9, (dewF-32)*5/9) ?? 50;
+    const T = tempF;
+    return Math.round(-42.379 + 2.04901523*T + 10.14333127*R - 0.22475541*T*R
+                      - 0.00683783*T*T - 0.05481717*R*R + 0.00122874*T*T*R
+                      + 0.00085282*T*R*R - 0.00000199*T*T*R*R);
+  }
+  return null;
 }
 
 function parseMetarWind(metar) {
@@ -1121,38 +1150,39 @@ function parseMetarWind(metar) {
 }
 
 async function fetchObservation() {
-  // Try each station in order; fall back if stale (>75 min) or unavailable
   const STALE_MS = 75 * 60 * 1000;
   for (let i = 0; i < OBS_STATIONS.length; i++) {
     const station = OBS_STATIONS[i];
     try {
       const url = `https://api.weather.gov/stations/${station.id}/observations/latest`;
-      const res = await fetch(url, { headers: NWS_HEADERS });
+      const res = await fetchWithTimeout(url, { headers: NWS_HEADERS }, 10000);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       const props = data.properties;
 
-      // Check if observation is stale (>75 min old)
       const obsTime = props.timestamp ? new Date(props.timestamp) : null;
-      const ageMs = obsTime ? (Date.now() - obsTime) : Infinity;
+      const ageMs   = obsTime ? (Date.now() - obsTime) : Infinity;
       if (ageMs > STALE_MS) {
         console.warn(`${station.id} obs stale (${Math.round(ageMs/60000)} min) — trying next`);
         continue;
       }
 
-      // Fetch raw METAR in parallel for accurate wind/gust data
-      const rawMetar = await fetchRawMetar(station.id);
-      const metarWind = parseMetarWind(rawMetar);
-
-      // Good observation — render it
+      // Render immediately from NWS API — never wait on METAR fetch
       activeObsStation = station;
       lastObsTime = obsTime;
-      renderObservation(props, station, metarWind);
+      renderObservation(props, station, null, null);
+      document.getElementById('obsTitle').innerHTML =
+        `📡 Latest Observation — ${station.id}` +
+        (station.id !== 'KFXE' ? ' <span style="color:var(--gold-light);font-size:10px">(fallback)</span>' : '');
       document.getElementById('obsMeta').textContent =
         `${station.id} · ${station.name} · ` +
         (obsTime ? obsTime.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:true}) : '--');
-      document.getElementById('obsTitle').innerHTML =
-        `📡 Latest Observation — ${station.id}${station.id !== 'KFXE' ? ' <span style="color:var(--gold-light);font-size:10px">(fallback)</span>' : ''}`;
+
+      // METAR fetch runs in background — upgrades wind/gust/dew if accessible
+      fetchRawMetar(station.id).then(rawMetar => {
+        if (!rawMetar) return;
+        renderObservation(props, station, parseMetarWind(rawMetar), rawMetar);
+      });
       return;
     } catch(e) {
       console.warn(`${station.id} failed:`, e.message);
@@ -1195,34 +1225,47 @@ function flightCategory(vis, ceil) {
   return 'VFR';
 }
 
-function renderObservation(p, station, metarWind) {
-  const tempF    = cToF(p.temperature?.value);
-  const dewF     = cToF(p.dewpoint?.value);
-  const feelsF   = cToF(p.heatIndex?.value || p.windChill?.value);
-  // METAR is authoritative for wind — use it as primary source if available
-  // API structured fields used only as fallback
+function renderObservation(p, station, metarWind, rawMetar) {
+  // Temp/dew: use METAR group (13/M04) as fallback when API returns null
+  const metarTD = parseMetarTempDew(rawMetar);
+  const tempC   = p.temperature?.value ?? metarTD.tempC;
+  const dewC    = p.dewpoint?.value    ?? metarTD.dewC;
+  const tempF   = cToF(tempC);
+  const dewF    = cToF(dewC);
+
+  // Humidity: API first, then calculate from temp+dew
+  const humid = p.relativeHumidity?.value
+    ? Math.round(p.relativeHumidity.value)
+    : calcRelativeHumidity(tempC, dewC);
+
+  // Wind: METAR primary (correct unit), NWS API fallback
   let windSpd, windGust;
-  if (metarWind && metarWind.spd != null) {
+  if (metarWind?.spd != null) {
     windSpd  = metarWind.spd;
-    windGust = metarWind.gust;  // null if no G group in METAR = truly no gusts
+    windGust = metarWind.gust;
   } else {
-    // Fallback to NWS API fields (may have unit confusion)
     windSpd  = windToMph(p.windSpeed?.value,  p.windSpeed?.unitCode);
     windGust = windToMph(p.windGust?.value,   p.windGust?.unitCode);
   }
-  // Use METAR wind direction if available (more reliable than API)
-  const windDir = (metarWind?.dir != null) ? metarWind.dir : p.windDirection?.value;
+  const windDir         = metarWind?.dir != null ? metarWind.dir : p.windDirection?.value;
+  const windDirCardinal = windDir != null ? degToCardinal(windDir) : '';
+
+  // Feels-like: API first, then NWS formula
+  const feelsF = p.heatIndex?.value  != null ? cToF(p.heatIndex.value)
+               : p.windChill?.value  != null ? cToF(p.windChill.value)
+               : calcFeelsLike(tempF, dewF, windSpd);
+
   const pressInHg = paToInHg(p.altimeterSetting?.value || p.barometricPressure?.value);
-  const visMi    = mToMi(p.visibility?.value);
-  const humid    = p.relativeHumidity?.value ? Math.round(p.relativeHumidity.value) : null;
-  const sky      = p.textDescription || 'Unknown';
-  // Ceiling from cloud layers
+  const visMi     = mToMi(p.visibility?.value);
+  const sky       = p.textDescription || 'Unknown';
   const ceilLayer = (p.cloudLayers||[]).find(l => ['BKN','OVC'].includes(l.amount));
-  const ceilFt   = ceilLayer ? Math.round(ceilLayer.base.value * 3.28084) : null;
-  const flCat    = flightCategory(p.visibility?.value, ceilLayer?.base?.value);
-  const icon     = wxIcon(sky, true);
-  const tColor   = tempF != null ? tempColor(tempF) : '#fff';
-  const windDirCardinal = p.windDirection?.value != null ? degToCardinal(p.windDirection.value) : '';
+  const ceilFt    = ceilLayer ? Math.round(ceilLayer.base.value * 3.28084) : null;
+  const flCat     = flightCategory(p.visibility?.value, ceilLayer?.base?.value);
+  const icon      = wxIcon(sky, true);
+  const tColor    = tempF != null ? tempColor(tempF) : '#fff';
+
+  // Decoded remarks block (only shown when raw METAR is available)
+  const remarksHTML = buildRemarksHTML(rawMetar);
 
   document.getElementById('obs-grid').innerHTML = `
     <div class="obs-hero">
@@ -1230,16 +1273,14 @@ function renderObservation(p, station, metarWind) {
       <div class="obs-hero-temp" style="color:${tColor}">${tempF ?? '--'}<span>°F</span></div>
       <div class="obs-hero-desc">
         <div class="obs-hero-sky">${escHtml(sky)}</div>
-        <div class="obs-hero-feel">${feelsF != null ? `Feels like ${feelsF}°F` : `Dew ${dewF ?? '--'}°F`}</div>
+        <div class="obs-hero-feel">${feelsF != null ? `Feels like ${feelsF}°F` : dewF != null ? `Dew ${dewF}°F` : ''}</div>
       </div>
       <div class="obs-flight ${flCat}">${flCat}</div>
     </div>
 
     <div class="obs-stat">
       <div class="obs-stat-label">Wind</div>
-      <div class="obs-stat-value">
-        ${windDirCardinal} ${windDir != null ? windDirArrow(windDir) : ''} ${windSpd ?? '--'} mph
-      </div>
+      <div class="obs-stat-value">${windDirCardinal} ${windDir != null ? windDirArrow(windDir) : ''} ${windSpd ?? '--'} mph</div>
       ${windGust
         ? `<div class="obs-stat-gust">Gusts ${windGust} mph</div>`
         : `<div class="obs-stat-sub">No gusts reported</div>`}
@@ -1247,8 +1288,8 @@ function renderObservation(p, station, metarWind) {
 
     <div class="obs-stat">
       <div class="obs-stat-label">Humidity</div>
-      <div class="obs-stat-value">${humid ?? '--'}%</div>
-      <div class="obs-stat-sub">Dew ${dewF ?? '--'}°F</div>
+      <div class="obs-stat-value">${humid != null ? humid+'%' : '--%'}</div>
+      <div class="obs-stat-sub">Dew ${dewF != null ? dewF+'°F' : '--°F'}</div>
     </div>
 
     <div class="obs-stat">
@@ -1262,7 +1303,56 @@ function renderObservation(p, station, metarWind) {
       <div class="obs-stat-value">${visMi ?? '--'} mi</div>
       ${ceilFt ? `<div class="obs-stat-sub">Ceiling ${ceilFt.toLocaleString()} ft</div>` : '<div class="obs-stat-sub">Clear</div>'}
     </div>
-  `;
+    ${remarksHTML}
+  \`;
+}
+
+// Decoded METAR remarks — empty string if no rawMetar or no RMK section
+function buildRemarksHTML(metar) {
+  if (!metar) return '';
+  const ri = metar.indexOf(' RMK ');
+  if (ri === -1) return '';
+  const rmk = metar.slice(ri + 5).trim();
+  const items = [];
+
+  if (/\bAO2\b/.test(rmk))      items.push(['Station',        'Auto w/ precip discriminator']);
+  else if (/\bAO1\b/.test(rmk)) items.push(['Station',        'Auto (no precip discriminator)']);
+
+  const slp = rmk.match(/\bSLP(\d{3})\b/);
+  if (slp) {
+    const v = parseInt(slp[1]);
+    items.push(['Sea Level Pres', ((v >= 550 ? 900 : 1000) + v/10).toFixed(1) + ' hPa']);
+  }
+
+  const tg = rmk.match(/\bT(0|1)(\d{3})(0|1)(\d{3})\b/);
+  if (tg) {
+    const tC = (tg[1]==='1'?-1:1)*parseInt(tg[2])/10;
+    const dC = (tg[3]==='1'?-1:1)*parseInt(tg[4])/10;
+    items.push(['Precise Temp', cToF(tC)+'°F ('+tC.toFixed(1)+'°C)']);
+    items.push(['Precise Dew',  cToF(dC)+'°F ('+dC.toFixed(1)+'°C)']);
+  }
+
+  const pt = rmk.match(/\b5(\d)(\d{3})\b/);
+  if (pt) {
+    const chars = ['Inc/Dec','Increasing','Inc/Steady','Inc Steady','Unsteady Inc',
+                   'Dec/Inc','Decreasing','Dec/Steady','Dec Steady'];
+    items.push(['3hr Pres', (chars[+pt[1]]||'?')+', '+(parseInt(pt[2])/10)+' hPa']);
+  }
+
+  if (/\$/.test(rmk)) items.push(['Maint', 'Station needs service']);
+
+  if (!items.length) return '';
+  return \`
+    <div style="grid-column:1/-1;background:rgba(0,20,60,0.5);border:1px solid var(--border);
+      border-left:3px solid var(--muted);border-radius:3px;padding:5px 10px;">
+      <div style="font-family:'Oswald',sans-serif;font-size:10px;font-weight:700;letter-spacing:2px;
+        text-transform:uppercase;color:var(--muted);margin-bottom:3px;">📋 Remarks</div>
+      <div style="display:flex;flex-wrap:wrap;gap:3px 14px;">
+        \${items.map(([l,v])=>\`<span style="font-family:'Share Tech Mono',monospace;font-size:11px;">
+          <span style="color:var(--muted);font-size:10px;">\${escHtml(l)}:</span> \${escHtml(v)}</span>\`).join('')}
+      </div>
+      <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--muted);margin-top:2px;word-break:break-all;">\${escHtml(metar)}</div>
+    </div>\`;
 }
 
 function degToCardinal(deg) {
@@ -1317,7 +1407,7 @@ function alertAffectsMargate(feature) {
 async function fetchAlerts() {
   setStatus('loading');
   try {
-    const res  = await fetch(NWS_ALERTS, { headers: NWS_HEADERS });
+    const res  = await fetchWithTimeout(NWS_ALERTS, { headers: NWS_HEADERS }, 10000);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     processAlerts(data.features || []);
@@ -1592,15 +1682,43 @@ setInterval(() => {
 //  BOOT + AUTO-REFRESH
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 window.addEventListener('load', () => {
+  // Init map first (synchronous DOM setup)
   initMap();
-  fetchAlerts();
-  fetchForecast();
-  fetchObservation();
 
+  // Fire all data fetches in parallel — one slow/blocked source won't delay others
+  Promise.allSettled([
+    fetchAlerts(),
+    fetchForecast(),
+    fetchObservation(),
+  ]).then(() => {
+    // All settled (resolved or rejected) — clear any remaining loading states
+    const fcGrid = document.getElementById('forecast-grid');
+    if (fcGrid.querySelector('.fc-loading')?.textContent === 'Loading forecast...') {
+      fcGrid.innerHTML = '<div class="fc-loading">Forecast unavailable</div>';
+    }
+  });
+
+  // Safety net: after 15s, replace any still-spinning loaders with error messages
+  setTimeout(() => {
+    const fcGrid = document.getElementById('forecast-grid');
+    if (fcGrid.innerHTML.includes('Loading forecast')) {
+      fcGrid.innerHTML = '<div class="fc-loading">Forecast unavailable — check network</div>';
+    }
+    const obsGrid = document.getElementById('obs-grid');
+    if (obsGrid.innerHTML.includes('Loading observation')) {
+      obsGrid.innerHTML = '<div class="fc-loading" style="grid-column:1/-1">Observation unavailable — check network</div>';
+    }
+    const scroll = document.getElementById('alerts-scroll');
+    if (scroll.innerHTML.includes('Loading alerts')) {
+      scroll.innerHTML = '<div class="no-alerts-tile">Alerts unavailable — check network</div>';
+    }
+  }, 15000);
+
+  // Auto-refresh intervals
   setInterval(fetchAlerts,      REFRESH_ALERTS);
   setInterval(fetchForecast,    REFRESH_FORECAST);
   setInterval(fetchObservation, REFRESH_OBS);
-  setInterval(loadRadar,        REFRESH_RADAR);
+  // Radar self-refreshes via its own internal timer
 });
 </script>
 </body>
