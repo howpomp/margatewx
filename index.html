@@ -910,7 +910,8 @@ function initMap() {
   loadRadar();
 }
 
-// IEM Mesonet radar — fetches real archive timestamps so each frame is genuinely different
+// RainViewer radar — proper timestamped archive, genuine animation
+// Fastly CDN (US-based), ~10 frames covering ~50 min of history
 let radarLayers = [];
 
 async function loadRadar() {
@@ -920,87 +921,95 @@ async function loadRadar() {
     radarLayers = [];
     radarFrames = [];
 
-    // Fetch available scan times from IEM archive API
-    const metaRes = await fetchWithTimeout(
-      'https://mesonet.agron.iastate.edu/api/1/radarproducts.json?station=KAMX&product=N0Q',
-      {}, 8000
-    );
-    if (!metaRes.ok) throw new Error('IEM API ' + metaRes.status);
-    const meta = await metaRes.json();
+    // RainViewer API returns real scan timestamps — each is a unique radar image
+    const res = await fetchWithTimeout('https://api.rainviewer.com/public/weather-maps.json', {}, 8000);
+    if (!res.ok) throw new Error('RainViewer API ' + res.status);
+    const data = await res.json();
 
-    // Last 6 scans (~30 min of history)
-    const scans = (meta.data || []).slice(-6);
-    if (!scans.length) throw new Error('No scans');
+    // Use last 10 past frames (~50 min of history at ~5 min per scan)
+    const past = (data.radar && data.radar.past) ? data.radar.past.slice(-10) : [];
+    if (!past.length) throw new Error('No frames');
 
-    radarFrames = scans.map(s => {
-      const raw = s.utc_valid || s.valid || s;
-      const dt = new Date(raw);
-      // Build IEM ridge tile URL: ridge::KAMX:N0Q:YYYYMMDDHHMMSS
-      const pad = n => String(n).padStart(2,'0');
-      const key = dt.getUTCFullYear()
-        + pad(dt.getUTCMonth()+1)
-        + pad(dt.getUTCDate())
-        + pad(dt.getUTCHours())
-        + pad(dt.getUTCMinutes()) + '00';
-      return {
-        dt,
-        url: 'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/ridge::KAMX:N0Q:' + key + '/{z}/{x}/{y}.png',
-        label: dt.toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit', hour12:true}),
-      };
+    radarFrames = past.map(f => ({
+      time: f.time,
+      path: f.path,
+      label: new Date(f.time * 1000).toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit', hour12:true}),
+    }));
+
+    // Pre-add all layers invisible so tiles load in background (no strobe)
+    radarFrames.forEach(frame => {
+      const layer = L.tileLayer(
+        'https://tilecache.rainviewer.com' + frame.path + '/256/{z}/{x}/{y}/2/1_1.png',
+        { opacity: 0, zIndex: 20, maxZoom: 14, attribution: '© RainViewer', errorTileUrl: '' }
+      );
+      layer.addTo(map);
+      radarLayers.push(layer);
     });
 
-    buildRadarLayers();
+    radarIdx = 0;
+    showRadarFrame(0);
+    scheduleRadarAnim();
+
+    document.getElementById('radarMeta').textContent =
+      'Base Reflectivity · ' + radarFrames.length + ' frames · Auto-animating';
 
   } catch(e) {
-    console.warn('IEM archive failed, using mosaic fallback:', e.message);
+    console.warn('RainViewer failed, trying IEM fallback:', e.message);
     loadRadarFallback();
   }
 }
 
-// Fallback: current mosaic with genuinely different ts values per frame
+// IEM fallback if RainViewer is blocked
 function loadRadarFallback() {
-  if (radarAnim) { clearInterval(radarAnim); radarAnim = null; }
-  radarLayers.forEach(l => { try { map.removeLayer(l); } catch(e) {} });
-  radarLayers = [];
+  try {
+    if (radarAnim) { clearInterval(radarAnim); radarAnim = null; }
+    radarLayers.forEach(l => { try { map.removeLayer(l); } catch(e) {} });
+    radarLayers = [];
 
-  const now = Date.now();
-  // Use 5-min intervals — each gets a distinct ts bucket
-  radarFrames = [5,4,3,2,1,0].map(i => {
-    const t = now - i * 5 * 60000;
-    const ts = Math.floor(t / 300000); // unique 5-min bucket
-    const dt = new Date(t);
-    return {
-      dt,
-      url: 'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/nexrad-n0q-900913/{z}/{x}/{y}.png?ts=' + ts,
-      label: dt.toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit', hour12:true}),
-    };
-  });
+    const now = Date.now();
+    // 10 frames, each 6 minutes apart = ~60 min history
+    // Round each to its own 6-min bucket to guarantee unique tiles
+    radarFrames = Array.from({length:10}, (_,i) => {
+      const t = now - (9-i) * 6 * 60000;
+      const ts = Math.floor(t / 360000);
+      return {
+        time: Math.floor(t/1000),
+        path: null,
+        ts,
+        label: new Date(t).toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit', hour12:true}),
+      };
+    });
 
-  buildRadarLayers();
+    radarFrames.forEach(frame => {
+      const layer = L.tileLayer(
+        'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/nexrad-n0q-900913/{z}/{x}/{y}.png?ts=' + frame.ts,
+        { opacity: 0, zIndex: 20, maxZoom: 14, attribution: '© Iowa State Univ. Mesonet', errorTileUrl: '' }
+      );
+      layer.addTo(map);
+      radarLayers.push(layer);
+    });
+
+    radarIdx = 0;
+    showRadarFrame(0);
+    scheduleRadarAnim();
+
+    document.getElementById('radarMeta').textContent =
+      'Base Reflectivity · IEM Fallback · Auto-animating';
+  } catch(e) {
+    document.getElementById('radarTimestamp').textContent = 'Radar unavailable';
+  }
 }
 
-function buildRadarLayers() {
-  // Pre-add all layers at opacity 0 so tiles load in background (no strobe)
-  radarFrames.forEach(frame => {
-    const layer = L.tileLayer(frame.url, {
-      opacity: 0, zIndex: 20, maxZoom: 14,
-      attribution: '© Iowa State Univ. Mesonet',
-      errorTileUrl: '',
-    });
-    layer.addTo(map);
-    radarLayers.push(layer);
-  });
-
-  radarIdx = 0;
-  showRadarFrame(0);
+function scheduleRadarAnim() {
   if (radarAnim) clearInterval(radarAnim);
   radarAnim = setInterval(() => {
-    radarIdx = (radarIdx + 1) % radarFrames.length;
-    showRadarFrame(radarIdx);
-  }, 800);
-
-  document.getElementById('radarMeta').textContent =
-    'Base Reflectivity · ' + radarFrames.length + ' frames · Auto-animating';
+    const isLast = radarIdx === radarFrames.length - 1;
+    // Hold 2.5s on the most recent frame, 900ms on all others
+    setTimeout(() => {
+      radarIdx = (radarIdx + 1) % radarFrames.length;
+      showRadarFrame(radarIdx);
+    }, isLast ? 2500 : 0);
+  }, 900);
 }
 
 function showRadarFrame(idx) {
