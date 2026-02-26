@@ -910,8 +910,9 @@ function initMap() {
   loadRadar();
 }
 
-// RainViewer radar — proper timestamped archive, genuine animation
-// Fastly CDN (US-based), ~10 frames covering ~50 min of history
+// NWS Ridge2 radar — pure US government servers, no geo-blocking possible
+// Uses api.weather.gov for scan timestamps + ridge2.weather.gov for tiles
+// Same domain as all other dashboard data
 let radarLayers = [];
 
 async function loadRadar() {
@@ -921,90 +922,108 @@ async function loadRadar() {
     radarLayers = [];
     radarFrames = [];
 
-    // RainViewer API returns real scan timestamps — each is a unique radar image
-    const res = await fetchWithTimeout('https://api.rainviewer.com/public/weather-maps.json', {}, 8000);
-    if (!res.ok) throw new Error('RainViewer API ' + res.status);
+    // Get available radar scans from NWS API — same domain as forecast/alerts
+    const res = await fetchWithTimeout(
+      'https://api.weather.gov/radar/stations/KAMX/scans?limit=12',
+      { headers: NWS_HEADERS }, 10000
+    );
+    if (!res.ok) throw new Error('NWS radar API ' + res.status);
     const data = await res.json();
 
-    // Use last 10 past frames (~50 min of history at ~5 min per scan)
-    const past = (data.radar && data.radar.past) ? data.radar.past.slice(-10) : [];
-    if (!past.length) throw new Error('No frames');
+    const scans = (data['@graph'] || data.features || []).slice(-10);
+    if (!scans.length) throw new Error('No scans returned');
 
-    radarFrames = past.map(f => ({
-      time: f.time,
-      path: f.path,
-      label: new Date(f.time * 1000).toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit', hour12:true}),
-    }));
-
-    // Pre-add all layers invisible so tiles load in background (no strobe)
-    radarFrames.forEach(frame => {
-      const layer = L.tileLayer(
-        'https://tilecache.rainviewer.com' + frame.path + '/256/{z}/{x}/{y}/2/1_1.png',
-        { opacity: 0, zIndex: 20, maxZoom: 14, attribution: '© RainViewer', errorTileUrl: '' }
-      );
-      layer.addTo(map);
-      radarLayers.push(layer);
+    radarFrames = scans.map(s => {
+      const timeStr = s.properties?.time || s.time || '';
+      const dt = new Date(timeStr);
+      // NWS ridge2 tile URL format
+      // https://ridge2.weather.gov/api/mosaic-conus/{timestamp}/N0B/{z}/{x}/{y}
+      const ts = encodeURIComponent(timeStr);
+      return {
+        dt,
+        url: 'https://ridge2.weather.gov/api/station-reflectivity/KAMX/0.5/' + ts + '/{z}/{x}/{y}',
+        label: dt.toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit', hour12:true}),
+      };
     });
 
-    radarIdx = 0;
-    showRadarFrame(0);
-    scheduleRadarAnim();
-
-    document.getElementById('radarMeta').textContent =
-      'Base Reflectivity · ' + radarFrames.length + ' frames · Auto-animating';
+    buildRadarLayers();
 
   } catch(e) {
-    console.warn('RainViewer failed, trying IEM fallback:', e.message);
-    loadRadarFallback();
+    console.warn('NWS ridge2 failed, trying NWS WMS:', e.message);
+    loadRadarWMS();
   }
 }
 
-// IEM fallback if RainViewer is blocked
-function loadRadarFallback() {
+// NWS GeoServer WMS fallback — single live image, no animation but guaranteed US
+function loadRadarWMS() {
   try {
     if (radarAnim) { clearInterval(radarAnim); radarAnim = null; }
     radarLayers.forEach(l => { try { map.removeLayer(l); } catch(e) {} });
     radarLayers = [];
 
-    const now = Date.now();
-    // 10 frames, each 6 minutes apart = ~60 min history
-    // Round each to its own 6-min bucket to guarantee unique tiles
-    radarFrames = Array.from({length:10}, (_,i) => {
-      const t = now - (9-i) * 6 * 60000;
-      const ts = Math.floor(t / 360000);
-      return {
-        time: Math.floor(t/1000),
-        path: null,
-        ts,
-        label: new Date(t).toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit', hour12:true}),
-      };
+    // Single live radar mosaic — refreshes every 2 min
+    const layer = L.tileLayer.wms('https://opengeo.ncep.noaa.gov/geoserver/conus/ows', {
+      layers: 'conus_bref_qcd',
+      format: 'image/png',
+      transparent: true,
+      version: '1.3.0',
+      opacity: 0.75,
+      zIndex: 20,
+      attribution: '© NOAA/NWS',
     });
+    layer.addTo(map);
+    radarLayers = [layer];
+    radarFrames = [{ label: 'Live' }];
 
-    radarFrames.forEach(frame => {
-      const layer = L.tileLayer(
-        'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/nexrad-n0q-900913/{z}/{x}/{y}.png?ts=' + frame.ts,
-        { opacity: 0, zIndex: 20, maxZoom: 14, attribution: '© Iowa State Univ. Mesonet', errorTileUrl: '' }
-      );
-      layer.addTo(map);
-      radarLayers.push(layer);
-    });
+    const ts = new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:true});
+    document.getElementById('radarTimestamp').textContent = 'Live · Updated ' + ts;
+    document.getElementById('radarMeta').textContent = 'Base Reflectivity · NWS Live · No animation';
 
-    radarIdx = 0;
-    showRadarFrame(0);
-    scheduleRadarAnim();
-
-    document.getElementById('radarMeta').textContent =
-      'Base Reflectivity · IEM Fallback · Auto-animating';
+    // Refresh every 2 minutes
+    radarAnim = setInterval(() => {
+      map.removeLayer(layer);
+      const newLayer = L.tileLayer.wms('https://opengeo.ncep.noaa.gov/geoserver/conus/ows', {
+        layers: 'conus_bref_qcd',
+        format: 'image/png',
+        transparent: true,
+        version: '1.3.0',
+        opacity: 0.75,
+        zIndex: 20,
+        attribution: '© NOAA/NWS',
+      });
+      newLayer.addTo(map);
+      radarLayers = [newLayer];
+      const t = new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:true});
+      document.getElementById('radarTimestamp').textContent = 'Live · Updated ' + t;
+    }, 120000);
   } catch(e) {
     document.getElementById('radarTimestamp').textContent = 'Radar unavailable';
   }
+}
+
+function buildRadarLayers() {
+  radarFrames.forEach(frame => {
+    const layer = L.tileLayer(frame.url, {
+      opacity: 0, zIndex: 20, maxZoom: 14,
+      attribution: '© NOAA/NWS',
+      errorTileUrl: '',
+    });
+    layer.addTo(map);
+    radarLayers.push(layer);
+  });
+
+  radarIdx = 0;
+  showRadarFrame(0);
+  scheduleRadarAnim();
+
+  document.getElementById('radarMeta').textContent =
+    'Base Reflectivity · ' + radarFrames.length + ' frames · Auto-animating';
 }
 
 function scheduleRadarAnim() {
   if (radarAnim) clearInterval(radarAnim);
   radarAnim = setInterval(() => {
     const isLast = radarIdx === radarFrames.length - 1;
-    // Hold 2.5s on the most recent frame, 900ms on all others
     setTimeout(() => {
       radarIdx = (radarIdx + 1) % radarFrames.length;
       showRadarFrame(radarIdx);
