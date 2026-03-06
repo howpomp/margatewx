@@ -768,6 +768,12 @@ html, body {
     </div>
     <div class="wx-stat-divider"></div>
     <div class="wx-stat">
+      <span class="wx-stat-label">Gusts</span>
+      <span class="wx-stat-value" id="hdr-gust">-- mph</span>
+      <span class="wx-stat-sub" id="hdr-gust-sub">No gusts</span>
+    </div>
+    <div class="wx-stat-divider"></div>
+    <div class="wx-stat">
       <span class="wx-stat-label">Humidity</span>
       <span class="wx-stat-value" id="hdr-humid">--%</span>
       <span class="wx-stat-sub" id="hdr-dew">Dew Point --°F</span>
@@ -856,12 +862,12 @@ html, body {
       <div class="panel" id="panel-librenms">
         <div class="panel-header">
           <span class="panel-title">🖥 Network Status — LibreNMS</span>
-          <span class="panel-meta" id="obsMeta">10.1.5.140</span>
+          <span class="panel-meta" id="obsMeta">librenms.margatedomain.local</span>
         </div>
         <div id="obs-grid" style="display:none;"></div>
         <div class="panel-body" style="padding:0;overflow:hidden;position:relative;">
           <iframe
-            data-src="http://10.1.5.140/dashboard/4"
+            data-src="https://librenms.matgatedomain.local"
             id="librenms-frame"
             title="LibreNMS Network Dashboard"
             sandbox="allow-same-origin allow-scripts"
@@ -1429,7 +1435,7 @@ function renderObservation(p, station, metarWind, rawMetar) {
   const remarksHTML = buildRemarksHTML(rawMetar);
 
   // Update header stat chips with live observation data
-  updateHeaderStats(tempF, windSpd, windDirCardinal, windDir, humid, dewF, pressInHg, visMi, flCat, sky);
+  updateHeaderStats(tempF, windSpd, windDirCardinal, windDir, windGust, humid, dewF, pressInHg, visMi, flCat, sky);
 
   document.getElementById('obs-grid').innerHTML = `
     <div class="obs-hero">
@@ -1472,7 +1478,7 @@ function renderObservation(p, station, metarWind, rawMetar) {
 }
 
 // Update live weather stats in header bar
-function updateHeaderStats(tempF, windSpd, windDirCardinal, windDir, humid, dewF, pressInHg, visMi, flCat, sky) {
+function updateHeaderStats(tempF, windSpd, windDirCardinal, windDir, windGust, humid, dewF, pressInHg, visMi, flCat, sky) {
   const el = id => document.getElementById(id);
 
   // Temp + color
@@ -1486,7 +1492,20 @@ function updateHeaderStats(tempF, windSpd, windDirCardinal, windDir, humid, dewF
   el('hdr-wind').textContent = windSpd != null ? windSpd + ' mph' : '-- mph';
   el('hdr-wind-dir').textContent = windDir != null ? (windDirCardinal || '') + ' ' + windDir + '°' : '--';
 
-  // Humidity + dew
+  // Wind gust
+  if (windGust != null) {
+    el('hdr-gust').textContent = windGust + ' mph';
+    el('hdr-gust').style.color = windGust >= 30 ? 'var(--warning)'
+                                : windGust >= 20 ? 'var(--gold-light)'
+                                : 'var(--white)';
+    el('hdr-gust-sub').textContent = 'Gusting';
+  } else {
+    el('hdr-gust').textContent = '-- mph';
+    el('hdr-gust').style.color = 'var(--muted)';
+    el('hdr-gust-sub').textContent = 'No gusts';
+  }
+
+  // Humidity + dew point
   el('hdr-humid').textContent = humid != null ? humid + '%' : '--%';
   el('hdr-dew').textContent = 'Dew Point ' + (dewF != null ? dewF + '°F' : '--°F');
 
